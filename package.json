@@ -1,0 +1,123 @@
+{
+  "name": "qa-html-structure-capture",
+  "displayName": "QA HTML Structure Capture & Compare",
+  "description": "Extension for QA teams to capture HTML structure, save baselines, and compare changes to resolve locator issues",
+  "version": "1.0.0",
+  "publisher": "qa-tools",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Testing",
+    "Other"
+  ],
+  "keywords": [
+    "qa",
+    "testing",
+    "html",
+    "dom",
+    "locators",
+    "automation"
+  ],
+  "activationEvents": [
+    "onCommand:qa-html-capture.captureBaseline",
+    "onCommand:qa-html-capture.compareStructure",
+    "onCommand:qa-html-capture.viewDiff"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "qa-html-capture.captureBaseline",
+        "title": "Capture HTML Baseline",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.compareStructure",
+        "title": "Compare HTML Structure",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.viewDiff",
+        "title": "View Structure Diff",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.generateLocators",
+        "title": "Generate Updated Locators",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.captureFromWeb",
+        "title": "Capture HTML from Web Page",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.deleteBaseline",
+        "title": "Delete Baseline",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.refresh",
+        "title": "Refresh",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.reconfigureProject",
+        "title": "Reconfigure Project",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.viewProjectSettings",
+        "title": "View Project Settings",
+        "category": "QA HTML Capture"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "qa-html-capture.captureBaseline",
+          "when": "editorLangId == html",
+          "group": "qa-html-capture"
+        },
+        {
+          "command": "qa-html-capture.compareStructure",
+          "when": "editorLangId == html",
+          "group": "qa-html-capture"
+        }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "qa-html-capture",
+          "name": "QA HTML Capture"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "qa-html-capture",
+          "title": "QA HTML Capture",
+          "icon": "$(diff)"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "16.x",
+    "typescript": "^4.9.4"
+  },
+  "dependencies": {
+    "diff": "^5.1.0",
+    "jsdom": "^22.1.0",
+    "cheerio": "^1.0.0-rc.12"
+  }
+}

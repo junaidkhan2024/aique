@@ -395,18 +395,18 @@ export class OnboardingWizard {
                         <label for="appType">Application Type <span class="required">*</span></label>
                         <select id="appType" name="appType" required>
                             <option value="">Select application type</option>
-                            <option value="web">🌐 Web Application</option>
-                            <option value="mobile">📱 Mobile Application</option>
-                            <option value="desktop">🖥️ Desktop Application</option>
-                            <option value="api">🔌 API Testing</option>
+                            <option value="web">Web Application</option>
+                            <option value="mobile">Mobile Application</option>
+                            <option value="desktop">Desktop Application</option>
+                            <option value="api">API Testing</option>
                         </select>
                     </div>
                     
                     <div class="form-group">
                         <label for="hasExistingTests">Existing Tests</label>
                         <select id="hasExistingTests" name="hasExistingTests">
-                            <option value="false">❌ No, starting fresh</option>
-                            <option value="true">✅ Yes, have existing tests</option>
+                            <option value="false">No, starting fresh</option>
+                            <option value="true">Yes, have existing tests</option>
                         </select>
                     </div>
                 </div>
@@ -428,7 +428,7 @@ export class OnboardingWizard {
             
             <!-- Step 2: Web App Details -->
             <div class="section hidden" id="step2">
-                <h3>🌐 Web Application Configuration</h3>
+                <h3>Web Application Configuration</h3>
                 
                 <div class="form-group">
                     <label for="webUrl">Main Application URL <span class="required">*</span></label>
@@ -487,7 +487,7 @@ export class OnboardingWizard {
             
             <!-- Step 3: Preferences -->
             <div class="section hidden" id="step3">
-                <h3>⚙️ Preferences</h3>
+                <h3>Preferences</h3>
                 
                 <div class="form-row">
                     <div class="form-group">
@@ -604,11 +604,16 @@ export class OnboardingWizard {
             document.getElementById('nextBtn').style.display = currentStep < totalSteps ? 'inline-block' : 'none';
             document.getElementById('saveBtn').style.display = currentStep === totalSteps ? 'inline-block' : 'none';
             
-            // Show step 2 only for web apps
+            // Show step 2 only for web apps - but don't auto-advance
             const appType = document.getElementById('appType').value;
             if (currentStep === 2 && appType !== 'web') {
-                nextStep();
-                return;
+                step2.classList.add('hidden');
+                step3.classList.remove('hidden');
+                currentStep = 3;
+                updateProgress();
+                document.getElementById('prevBtn').style.display = 'inline-block';
+                document.getElementById('nextBtn').style.display = 'none';
+                document.getElementById('saveBtn').style.display = 'inline-block';
             }
         }
         
@@ -740,10 +745,10 @@ export class OnboardingWizard {
             if (message.type === 'url-test-result') {
                 const statusEl = document.getElementById('urlStatus');
                 if (message.valid) {
-                    statusEl.textContent = '✅ URL is accessible';
+                    statusEl.textContent = 'URL is accessible';
                     statusEl.className = 'url-status success';
                 } else {
-                    statusEl.textContent = '❌ URL not accessible';
+                    statusEl.textContent = 'URL not accessible';
                     statusEl.className = 'url-status error';
                 }
             }
@@ -763,7 +768,7 @@ export class OnboardingWizard {
     }
 
     private async showCompletionMessage(details: ProjectDetails): Promise<void> {
-        let message = `🎉 Setup Complete!
+        let message = `Setup Complete!
 
 Your project "${details.projectName}" is now configured for QA HTML Structure Capture.
 

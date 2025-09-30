@@ -1,5 +1,14 @@
 import * as vscode from 'vscode';
-import { ComparisonResult } from './htmlComparator';
+import { ComparisonResult, ElementDifference } from './htmlComparator';
+
+interface DiffChange {
+    type: 'equal' | 'delete' | 'insert' | 'replace';
+    count: number;
+    lines?: string[];
+    baselineLines?: string[];
+    currentLines?: string[];
+}
+
 
 export class DiffViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'qa-html-capture.diffView';
@@ -72,6 +81,12 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
                     case 'highlightElement':
                         this.highlightElementInEditor(message.xpath);
                         break;
+                    case 'exportDiff':
+                        this.exportDiffReport(comparisonResult, message.data);
+                        break;
+                    case 'generateLocators':
+                        this.generateLocatorsFromDiff(comparisonResult);
+                        break;
                 }
             },
             undefined,
@@ -96,7 +111,7 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
         const { summary, differences } = comparisonResult;
         
         // Generate highlighted HTML with inline differences
-        const highlightedHtml = this.generateHighlightedDiff(baselineHtml, currentHtml, differences);
+        const highlightedHtml = this.generateHighlightedDiff(baselineHtml, currentHtml, comparisonResult);
         
         return `<!DOCTYPE html>
 <html lang="en">
@@ -146,10 +161,22 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
             font-weight: 500;
         }
         
-        .added { background: #4caf50; color: white; }
-        .removed { background: #f44336; color: white; }
-        .modified { background: #9c27b0; color: white; }
-        .moved { background: #ff9800; color: white; }
+        .added { 
+            background: #28a745; 
+            color: white; 
+        }
+        .removed { 
+            background: #dc3545; 
+            color: white; 
+        }
+        .modified { 
+            background: #17a2b8; 
+            color: white; 
+        }
+        .moved { 
+            background: #6c757d; 
+            color: white; 
+        }
         
         .diff-container {
             display: flex;
@@ -200,8 +227,8 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
         .line {
             display: flex;
             align-items: center;
-            margin: 2px 0;
-            padding: 2px 8px;
+            margin: 1px 0;
+            padding: 4px 8px;
             border-radius: 3px;
         }
         
@@ -219,18 +246,32 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
         }
         
         .added-line {
-            background: rgba(76, 175, 80, 0.2);
-            border-left: 3px solid #4caf50;
+            background: #d4edda !important;
+            border-left: 4px solid #28a745 !important;
+            color: #155724 !important;
+            font-weight: bold !important;
         }
         
         .removed-line {
-            background: rgba(244, 67, 54, 0.2);
-            border-left: 3px solid #f44336;
+            background: #f8d7da !important;
+            border-left: 4px solid #dc3545 !important;
+            color: #721c24 !important;
+            text-decoration: line-through !important;
+            font-weight: bold !important;
         }
         
         .modified-line {
-            background: rgba(156, 39, 176, 0.2);
-            border-left: 3px solid #9c27b0;
+            background: #d1ecf1 !important;
+            border-left: 4px solid #17a2b8 !important;
+            color: #0c5460 !important;
+            font-weight: bold !important;
+        }
+        
+        .moved-line {
+            background: #e2e3e5 !important;
+            border-left: 4px solid #6c757d !important;
+            color: #383d41 !important;
+            font-weight: bold !important;
         }
         
         .unchanged-line {
@@ -312,22 +353,41 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
         }
         
         .diff-added {
-            background: rgba(76, 175, 80, 0.3);
-            color: #4caf50;
-            border: 1px solid #4caf50;
+            background: #d4edda !important;
+            color: #155724 !important;
+            border: 1px solid #28a745 !important;
+            border-radius: 2px;
+            font-weight: bold !important;
+            padding: 1px 3px;
+            text-decoration: underline !important;
         }
         
         .diff-removed {
-            background: rgba(244, 67, 54, 0.3);
-            color: #f44336;
-            border: 1px solid #f44336;
-            text-decoration: line-through;
+            background: #f8d7da !important;
+            color: #721c24 !important;
+            border: 1px solid #dc3545 !important;
+            border-radius: 2px;
+            text-decoration: line-through !important;
+            font-weight: bold !important;
+            padding: 1px 3px;
         }
         
         .diff-modified {
-            background: rgba(156, 39, 176, 0.3);
-            color: #9c27b0;
-            border: 1px solid #9c27b0;
+            background: #d1ecf1 !important;
+            color: #0c5460 !important;
+            border: 1px solid #17a2b8 !important;
+            border-radius: 2px;
+            font-weight: bold !important;
+            padding: 1px 3px;
+        }
+        
+        .diff-moved {
+            background: #e2e3e5 !important;
+            color: #383d41 !important;
+            border: 1px solid #6c757d !important;
+            border-radius: 2px;
+            font-weight: bold !important;
+            padding: 1px 3px;
         }
         
         .diff-context {
@@ -351,7 +411,7 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
     <div class="diff-container">
         <div class="diff-panel">
             <div class="panel-header baseline-header">
-                📷 Baseline (${comparisonResult.baselineName})
+                Baseline (${comparisonResult.baselineName})
             </div>
             <div class="code-viewer" id="baseline-viewer">
                 ${highlightedHtml.baseline}
@@ -360,7 +420,7 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
         
         <div class="diff-panel">
             <div class="panel-header current-header">
-                🔄 Current HTML
+                Current HTML
             </div>
             <div class="code-viewer" id="current-viewer">
                 ${highlightedHtml.current}
@@ -373,7 +433,7 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
             <span id="sync-text">🔗 Sync Scroll</span>
         </button>
         <button class="control-btn" onclick="exportDiff()">📄 Export</button>
-        <button class="control-btn" onclick="generateLocators()">⚙️ Generate Locators</button>
+        <button class="control-btn" onclick="generateLocators()">Generate Locators</button>
     </div>
     
     <div class="element-info" id="element-info">
@@ -411,13 +471,29 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
         }
         
         function exportDiff() {
-            // Implementation for exporting diff
-            alert('Export functionality would be implemented here');
+            // Send message to VS Code to export the diff
+            vscode.postMessage({
+                command: 'exportDiff',
+                data: {
+                    baselineName: '${comparisonResult.baselineName}',
+                    summary: {
+                        added: ${summary.addedElements},
+                        removed: ${summary.removedElements},
+                        modified: ${summary.modifiedElements},
+                        moved: ${summary.movedElements}
+                    }
+                }
+            });
         }
         
         function generateLocators() {
-            // Implementation for generating locators
-            alert('Generate locators functionality would be implemented here');
+            // Send message to VS Code to generate locators
+            vscode.postMessage({
+                command: 'generateLocators',
+                data: {
+                    baselineName: '${comparisonResult.baselineName}'
+                }
+            });
         }
         
         // Handle element clicks to show details
@@ -434,65 +510,97 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
 </html>`;
     }
 
-    private generateHighlightedDiff(baselineHtml: string, currentHtml: string, differences: any[]): { baseline: string; current: string } {
+    private generateHighlightedDiff(baselineHtml: string, currentHtml: string, comparisonResult: ComparisonResult): { baseline: string; current: string } {
         const baselineLines = baselineHtml.split('\n');
         const currentLines = currentHtml.split('\n');
         
-        // Create a simple line-by-line diff with highlighting
-        const maxLines = Math.max(baselineLines.length, currentLines.length);
+        // Use a more sophisticated diff algorithm
+        const diff = this.computeLineDiff(baselineLines, currentLines);
         
         let baselineHighlighted = '';
         let currentHighlighted = '';
+        let baselineLineNumber = 1;
+        let currentLineNumber = 1;
         
-        for (let i = 0; i < maxLines; i++) {
-            const baselineLine = baselineLines[i] || '';
-            const currentLine = currentLines[i] || '';
-            
-            const lineNumber = i + 1;
-            
-            if (baselineLine === currentLine) {
-                // Lines are identical - no highlighting
-                baselineHighlighted += `<div class="line unchanged-line">
-                    <span class="line-number">${lineNumber}</span>
-                    <span class="line-content">${this.escapeHtml(baselineLine)}</span>
-                </div>`;
-                currentHighlighted += `<div class="line unchanged-line">
-                    <span class="line-number">${lineNumber}</span>
-                    <span class="line-content">${this.escapeHtml(currentLine)}</span>
-                </div>`;
-            } else if (!baselineLine) {
-                // Line added in current
-                currentHighlighted += `<div class="line added-line">
-                    <span class="line-number">${lineNumber}</span>
-                    <span class="line-content"><span class="diff-highlight diff-added">${this.escapeHtml(currentLine)}</span></span>
-                </div>`;
-                baselineHighlighted += `<div class="line">
-                    <span class="line-number"></span>
-                    <span class="line-content"></span>
-                </div>`;
-            } else if (!currentLine) {
-                // Line removed from baseline
-                baselineHighlighted += `<div class="line removed-line">
-                    <span class="line-number">${lineNumber}</span>
-                    <span class="line-content"><span class="diff-highlight diff-removed">${this.escapeHtml(baselineLine)}</span></span>
-                </div>`;
-                currentHighlighted += `<div class="line">
-                    <span class="line-number"></span>
-                    <span class="line-content"></span>
-                </div>`;
-            } else {
-                // Lines are different - highlight the differences
-                const highlightedBaseline = this.highlightLineDifferences(baselineLine, currentLine, 'removed');
-                const highlightedCurrent = this.highlightLineDifferences(currentLine, baselineLine, 'added');
-                
-                baselineHighlighted += `<div class="line modified-line">
-                    <span class="line-number">${lineNumber}</span>
-                    <span class="line-content">${highlightedBaseline}</span>
-                </div>`;
-                currentHighlighted += `<div class="line modified-line">
-                    <span class="line-number">${lineNumber}</span>
-                    <span class="line-content">${highlightedCurrent}</span>
-                </div>`;
+        for (const change of diff) {
+            switch (change.type) {
+                case 'equal':
+                    // Lines are identical - no highlighting
+                    if (change.lines) {
+                        for (let i = 0; i < change.count; i++) {
+                            const line = change.lines[i];
+                            baselineHighlighted += `<div class="line unchanged-line">
+                                <span class="line-number">${baselineLineNumber}</span>
+                                <span class="line-content">${this.escapeHtml(line)}</span>
+                            </div>`;
+                            currentHighlighted += `<div class="line unchanged-line">
+                                <span class="line-number">${currentLineNumber}</span>
+                                <span class="line-content">${this.escapeHtml(line)}</span>
+                            </div>`;
+                            baselineLineNumber++;
+                            currentLineNumber++;
+                        }
+                    }
+                    break;
+                    
+                case 'delete':
+                    // Lines removed from baseline
+                    if (change.lines) {
+                        for (let i = 0; i < change.count; i++) {
+                            const line = change.lines[i];
+                            baselineHighlighted += `<div class="line removed-line">
+                                <span class="line-number">${baselineLineNumber}</span>
+                                <span class="line-content"><span class="diff-highlight diff-removed">${this.escapeHtml(line)}</span></span>
+                            </div>`;
+                            currentHighlighted += `<div class="line">
+                                <span class="line-number"></span>
+                                <span class="line-content"></span>
+                            </div>`;
+                            baselineLineNumber++;
+                        }
+                    }
+                    break;
+                    
+                case 'insert':
+                    // Lines added to current
+                    if (change.lines) {
+                        for (let i = 0; i < change.count; i++) {
+                            const line = change.lines[i];
+                            baselineHighlighted += `<div class="line">
+                                <span class="line-number"></span>
+                                <span class="line-content"></span>
+                            </div>`;
+                            currentHighlighted += `<div class="line added-line">
+                                <span class="line-number">${currentLineNumber}</span>
+                                <span class="line-content"><span class="diff-highlight diff-added">${this.escapeHtml(line)}</span></span>
+                            </div>`;
+                            currentLineNumber++;
+                        }
+                    }
+                    break;
+                    
+                case 'replace':
+                    // Lines replaced - highlight as modified
+                    if (change.baselineLines && change.currentLines) {
+                        for (let i = 0; i < change.count; i++) {
+                            const baselineLine = change.baselineLines[i];
+                            const currentLine = change.currentLines[i];
+                            const baselineHighlightedContent = this.highlightInlineChanges(baselineLine, currentLine, 'removed');
+                            const currentHighlightedContent = this.highlightInlineChanges(baselineLine, currentLine, 'added');
+                            
+                            baselineHighlighted += `<div class="line modified-line">
+                                <span class="line-number">${baselineLineNumber}</span>
+                                <span class="line-content">${baselineHighlightedContent}</span>
+                            </div>`;
+                            currentHighlighted += `<div class="line modified-line">
+                                <span class="line-number">${currentLineNumber}</span>
+                                <span class="line-content">${currentHighlightedContent}</span>
+                            </div>`;
+                            baselineLineNumber++;
+                            currentLineNumber++;
+                        }
+                    }
+                    break;
             }
         }
         
@@ -501,6 +609,134 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
             current: currentHighlighted
         };
     }
+
+
+    private computeLineDiff(baselineLines: string[], currentLines: string[]): DiffChange[] {
+        const changes: DiffChange[] = [];
+        let baselineIndex = 0;
+        let currentIndex = 0;
+        
+        while (baselineIndex < baselineLines.length || currentIndex < currentLines.length) {
+            // Find the next common line
+            let commonLength = 0;
+            while (
+                baselineIndex + commonLength < baselineLines.length &&
+                currentIndex + commonLength < currentLines.length &&
+                baselineLines[baselineIndex + commonLength] === currentLines[currentIndex + commonLength]
+            ) {
+                commonLength++;
+            }
+            
+            if (commonLength > 0) {
+                // Add common lines
+                changes.push({
+                    type: 'equal',
+                    count: commonLength,
+                    lines: baselineLines.slice(baselineIndex, baselineIndex + commonLength)
+                });
+                baselineIndex += commonLength;
+                currentIndex += commonLength;
+            } else {
+                // Find deletions and insertions
+                let deleteCount = 0;
+                let insertCount = 0;
+                
+                // Count consecutive deletions
+                while (baselineIndex + deleteCount < baselineLines.length) {
+                    const baselineLine = baselineLines[baselineIndex + deleteCount];
+                    let found = false;
+                    for (let i = currentIndex; i < currentLines.length; i++) {
+                        if (baselineLine === currentLines[i]) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        deleteCount++;
+                    } else {
+                        break;
+                    }
+                }
+                
+                // Count consecutive insertions
+                while (currentIndex + insertCount < currentLines.length) {
+                    const currentLine = currentLines[currentIndex + insertCount];
+                    let found = false;
+                    for (let i = baselineIndex; i < baselineLines.length; i++) {
+                        if (currentLine === baselineLines[i]) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        insertCount++;
+                    } else {
+                        break;
+                    }
+                }
+                
+                if (deleteCount > 0 && insertCount > 0) {
+                    // Replace operation
+                    changes.push({
+                        type: 'replace',
+                        count: Math.min(deleteCount, insertCount),
+                        baselineLines: baselineLines.slice(baselineIndex, baselineIndex + Math.min(deleteCount, insertCount)),
+                        currentLines: currentLines.slice(currentIndex, currentIndex + Math.min(deleteCount, insertCount))
+                    });
+                    baselineIndex += Math.min(deleteCount, insertCount);
+                    currentIndex += Math.min(deleteCount, insertCount);
+                } else if (deleteCount > 0) {
+                    // Delete operation
+                    changes.push({
+                        type: 'delete',
+                        count: deleteCount,
+                        lines: baselineLines.slice(baselineIndex, baselineIndex + deleteCount)
+                    });
+                    baselineIndex += deleteCount;
+                } else if (insertCount > 0) {
+                    // Insert operation
+                    changes.push({
+                        type: 'insert',
+                        count: insertCount,
+                        lines: currentLines.slice(currentIndex, currentIndex + insertCount)
+                    });
+                    currentIndex += insertCount;
+                } else {
+                    // No more changes
+                    break;
+                }
+            }
+        }
+        
+        return changes;
+    }
+
+    private highlightInlineChanges(baselineLine: string, currentLine: string, type: 'added' | 'removed'): string {
+        // Simple word-by-word comparison for inline highlighting
+        const baselineWords = baselineLine.split(/(\s+)/);
+        const currentWords = currentLine.split(/(\s+)/);
+        
+        let result = '';
+        const maxLength = Math.max(baselineWords.length, currentWords.length);
+        
+        for (let i = 0; i < maxLength; i++) {
+            const baselineWord = baselineWords[i] || '';
+            const currentWord = currentWords[i] || '';
+            
+            if (baselineWord === currentWord) {
+                result += this.escapeHtml(baselineWord);
+            } else {
+                if (type === 'removed') {
+                    result += `<span class="diff-highlight diff-removed">${this.escapeHtml(baselineWord)}</span>`;
+                } else {
+                    result += `<span class="diff-highlight diff-added">${this.escapeHtml(currentWord)}</span>`;
+                }
+            }
+        }
+        
+        return result;
+    }
+
 
     private highlightLineDifferences(line1: string, line2: string, type: 'added' | 'removed'): string {
         // Enhanced comparison for HTML attributes
@@ -1056,5 +1292,299 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
         // This is a simplified implementation
         // In a real scenario, you'd need to parse the XPath and find the corresponding line
         vscode.window.showInformationMessage(`Highlighting element: ${xpath}`);
+    }
+
+    private async exportDiffReport(comparisonResult: ComparisonResult, data: any): Promise<void> {
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Create reports directory if it doesn't exist
+            const reportsDir = path.join(this.context.extensionPath, 'reports');
+            if (!fs.existsSync(reportsDir)) {
+                fs.mkdirSync(reportsDir, { recursive: true });
+            }
+            
+            // Generate report content
+            const reportContent = this.generateDiffReportContent(comparisonResult, data);
+            
+            // Save report file
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const fileName = `diff-report-${comparisonResult.baselineName}-${timestamp}.html`;
+            const filePath = path.join(reportsDir, fileName);
+            
+            fs.writeFileSync(filePath, reportContent);
+            
+            // Show success message and offer to open file
+            const action = await vscode.window.showInformationMessage(
+                `Diff report exported successfully to: ${fileName}`,
+                'Open Report',
+                'Open Folder',
+                'Close'
+            );
+            
+            if (action === 'Open Report') {
+                const document = await vscode.workspace.openTextDocument(filePath);
+                await vscode.window.showTextDocument(document);
+            } else if (action === 'Open Folder') {
+                vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(filePath));
+            }
+            
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to export diff report: ${error}`);
+        }
+    }
+
+    private generateDiffReportContent(comparisonResult: ComparisonResult, data: any): string {
+        const summary = comparisonResult.summary;
+        
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML Structure Diff Report - ${comparisonResult.baselineName}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .summary-item {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            border-left: 4px solid #007bff;
+        }
+        .summary-item.added { border-left-color: #28a745; }
+        .summary-item.removed { border-left-color: #dc3545; }
+        .summary-item.modified { border-left-color: #ffc107; }
+        .summary-item.moved { border-left-color: #6f42c1; }
+        .summary-item h3 {
+            margin: 0 0 10px 0;
+            font-size: 24px;
+        }
+        .summary-item p {
+            margin: 0;
+            color: #666;
+        }
+        .details {
+            margin-top: 30px;
+        }
+        .details h3 {
+            color: #333;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
+        }
+        .element-list {
+            margin: 15px 0;
+        }
+        .element-item {
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            margin: 10px 0;
+            padding: 15px;
+        }
+        .element-item.added {
+            border-left: 4px solid #28a745;
+            background: #f1f8e9;
+        }
+        .element-item.removed {
+            border-left: 4px solid #dc3545;
+            background: #ffebee;
+        }
+        .element-item.modified {
+            border-left: 4px solid #ffc107;
+            background: #fff3e0;
+        }
+        .element-item.moved {
+            border-left: 4px solid #6f42c1;
+            background: #f3e5f5;
+        }
+        .element-id {
+            font-weight: bold;
+            color: #007bff;
+            margin-bottom: 8px;
+        }
+        .locator {
+            background: #e8f5e8;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin: 2px 4px 2px 0;
+            display: inline-block;
+        }
+        .footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+            text-align: center;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>HTML Structure Diff Report</h1>
+            <p>Baseline: ${comparisonResult.baselineName}</p>
+            <p>Generated: ${new Date().toLocaleString()}</p>
+        </div>
+        
+        <div class="summary">
+            <div class="summary-item added">
+                <h3>${summary.addedElements}</h3>
+                <p>Added Elements</p>
+            </div>
+            <div class="summary-item removed">
+                <h3>${summary.removedElements}</h3>
+                <p>Removed Elements</p>
+            </div>
+            <div class="summary-item modified">
+                <h3>${summary.modifiedElements}</h3>
+                <p>Modified Elements</p>
+            </div>
+            <div class="summary-item moved">
+                <h3>${summary.movedElements}</h3>
+                <p>Moved Elements</p>
+            </div>
+        </div>
+        
+        <div class="details">
+            <h3>Element Changes</h3>
+            ${this.generateElementChangesHTML(comparisonResult)}
+        </div>
+        
+        <div class="footer">
+            <p>Report generated by QA HTML Structure Capture Extension</p>
+        </div>
+    </div>
+</body>
+</html>`;
+    }
+
+    private generateElementChangesHTML(comparisonResult: ComparisonResult): string {
+        let html = '';
+        
+        // Group differences by type
+        const addedElements = comparisonResult.differences.filter(diff => diff.type === 'added');
+        const removedElements = comparisonResult.differences.filter(diff => diff.type === 'removed');
+        const modifiedElements = comparisonResult.differences.filter(diff => diff.type === 'modified');
+        const movedElements = comparisonResult.differences.filter(diff => diff.type === 'moved');
+        
+        // Add elements
+        if (addedElements.length > 0) {
+            html += '<h4>Added Elements</h4><div class="element-list">';
+            addedElements.forEach(diff => {
+                const element = diff.newElement;
+                if (element) {
+                    html += `
+                        <div class="element-item added">
+                            <div class="element-id">${element.tagName}${element.attributes.id ? `#${element.attributes.id}` : ''}${element.attributes.class ? `.${element.attributes.class}` : ''}</div>
+                            <div>${element.text || 'No text content'}</div>
+                            <div>Locators: ${element.locators.map((loc: string) => `<span class="locator">${loc}</span>`).join('')}</div>
+                        </div>
+                    `;
+                }
+            });
+            html += '</div>';
+        }
+        
+        // Removed elements
+        if (removedElements.length > 0) {
+            html += '<h4>Removed Elements</h4><div class="element-list">';
+            removedElements.forEach(diff => {
+                const element = diff.oldElement;
+                if (element) {
+                    html += `
+                        <div class="element-item removed">
+                            <div class="element-id">${element.tagName}${element.attributes.id ? `#${element.attributes.id}` : ''}${element.attributes.class ? `.${element.attributes.class}` : ''}</div>
+                            <div>${element.text || 'No text content'}</div>
+                            <div>Locators: ${element.locators.map((loc: string) => `<span class="locator">${loc}</span>`).join('')}</div>
+                        </div>
+                    `;
+                }
+            });
+            html += '</div>';
+        }
+        
+        // Modified elements
+        if (modifiedElements.length > 0) {
+            html += '<h4>Modified Elements</h4><div class="element-list">';
+            modifiedElements.forEach(diff => {
+                const oldElement = diff.oldElement;
+                const newElement = diff.newElement;
+                if (oldElement && newElement) {
+                    html += `
+                        <div class="element-item modified">
+                            <div class="element-id">${newElement.tagName}${newElement.attributes.id ? `#${newElement.attributes.id}` : ''}${newElement.attributes.class ? `.${newElement.attributes.class}` : ''}</div>
+                            <div>${newElement.text || 'No text content'}</div>
+                            <div>Old Locators: ${oldElement.locators.map((loc: string) => `<span class="locator">${loc}</span>`).join('')}</div>
+                            <div>New Locators: ${newElement.locators.map((loc: string) => `<span class="locator">${loc}</span>`).join('')}</div>
+                        </div>
+                    `;
+                }
+            });
+            html += '</div>';
+        }
+        
+        // Moved elements
+        if (movedElements.length > 0) {
+            html += '<h4>Moved Elements</h4><div class="element-list">';
+            movedElements.forEach(diff => {
+                const element = diff.newElement;
+                if (element) {
+                    html += `
+                        <div class="element-item moved">
+                            <div class="element-id">${element.tagName}${element.attributes.id ? `#${element.attributes.id}` : ''}${element.attributes.class ? `.${element.attributes.class}` : ''}</div>
+                            <div>${element.text || 'No text content'}</div>
+                            <div>Locators: ${element.locators.map((loc: string) => `<span class="locator">${loc}</span>`).join('')}</div>
+                        </div>
+                    `;
+                }
+            });
+            html += '</div>';
+        }
+        
+        return html;
+    }
+
+    private async generateLocatorsFromDiff(comparisonResult: ComparisonResult): Promise<void> {
+        try {
+            const { LocatorGenerator } = await import('./locatorGenerator');
+            const locatorGenerator = new LocatorGenerator();
+            
+            // Generate locators for the current HTML
+            await locatorGenerator.generateUpdatedLocatorsFromComparison(comparisonResult);
+            
+            vscode.window.showInformationMessage('Updated locators generated successfully!');
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to generate locators: ${error}`);
+        }
     }
 }

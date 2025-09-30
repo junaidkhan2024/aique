@@ -12,6 +12,77 @@ export interface ComparisonResult {
     timestamp: Date;
 }
 
+export class IterableDiffResult implements Iterable<ElementDifference> {
+    private differences: ElementDifference[];
+    private currentIndex: number = 0;
+
+    constructor(comparisonResult: ComparisonResult) {
+        this.differences = comparisonResult.differences;
+    }
+
+    [Symbol.iterator](): Iterator<ElementDifference> {
+        return {
+            next: (): IteratorResult<ElementDifference> => {
+                if (this.currentIndex < this.differences.length) {
+                    const result = {
+                        value: this.differences[this.currentIndex],
+                        done: false
+                    };
+                    this.currentIndex++;
+                    return result;
+                } else {
+                    this.currentIndex = 0; // Reset for next iteration
+                    return { done: true, value: undefined };
+                }
+            }
+        };
+    }
+
+    // Additional utility methods for iterating
+    forEach(callback: (difference: ElementDifference, index: number) => void): void {
+        this.differences.forEach(callback);
+    }
+
+    map<T>(callback: (difference: ElementDifference, index: number) => T): T[] {
+        return this.differences.map(callback);
+    }
+
+    filter(callback: (difference: ElementDifference, index: number) => boolean): ElementDifference[] {
+        return this.differences.filter(callback);
+    }
+
+    find(callback: (difference: ElementDifference, index: number) => boolean): ElementDifference | undefined {
+        return this.differences.find(callback);
+    }
+
+    // Get specific types of differences
+    getAddedElements(): ElementDifference[] {
+        return this.differences.filter(diff => diff.type === 'added');
+    }
+
+    getRemovedElements(): ElementDifference[] {
+        return this.differences.filter(diff => diff.type === 'removed');
+    }
+
+    getModifiedElements(): ElementDifference[] {
+        return this.differences.filter(diff => diff.type === 'modified');
+    }
+
+    getMovedElements(): ElementDifference[] {
+        return this.differences.filter(diff => diff.type === 'moved');
+    }
+
+    // Get total count
+    get length(): number {
+        return this.differences.length;
+    }
+
+    // Get by index
+    get(index: number): ElementDifference | undefined {
+        return this.differences[index];
+    }
+}
+
 export interface ElementDifference {
     type: 'added' | 'removed' | 'modified' | 'moved';
     elementId: string;
@@ -36,17 +107,17 @@ export interface ComparisonSummary {
 export class HTMLComparator {
     constructor(private context: vscode.ExtensionContext) {}
 
-    async compareStructure(): Promise<void> {
+    async compareStructure(): Promise<IterableDiffResult | null> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             vscode.window.showErrorMessage('No active editor found. Please open an HTML file.');
-            return;
+            return null;
         }
 
         const document = editor.document;
         if (document.languageId !== 'html') {
             vscode.window.showErrorMessage('Current file is not an HTML file.');
-            return;
+            return null;
         }
 
         // Get all available baselines
@@ -55,7 +126,7 @@ export class HTMLComparator {
 
         if (baselines.length === 0) {
             vscode.window.showErrorMessage('No baselines found. Please capture a baseline first.');
-            return;
+            return null;
         }
 
         // Let user select baseline to compare against
@@ -71,25 +142,44 @@ export class HTMLComparator {
         });
 
         if (!selectedBaseline) {
-            return;
+            return null;
         }
 
         try {
-            const currentHtml = document.getText();
-            const comparisonResult = await this.compareHTML(
-                selectedBaseline.baseline,
-                currentHtml,
-                document.uri.toString()
-            );
+            // Show progress
+            const result = await vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: "Comparing HTML structures...",
+                cancellable: false
+            }, async (progress) => {
+                progress.report({ increment: 0, message: "Analyzing current HTML..." });
+                
+                const currentHtml = document.getText();
+                
+                progress.report({ increment: 30, message: "Comparing with baseline..." });
+                const comparisonResult = await this.compareHTML(
+                    selectedBaseline.baseline,
+                    currentHtml,
+                    document.uri.toString()
+                );
 
-            // Store comparison result
-            await this.saveComparisonResult(comparisonResult);
+                progress.report({ increment: 50, message: "Saving results..." });
+                // Store comparison result
+                await this.saveComparisonResult(comparisonResult);
 
-            // Show results
-            await this.showComparisonResults(comparisonResult);
+                progress.report({ increment: 20, message: "Opening diff view..." });
+                // Show results
+                await this.showComparisonResults(comparisonResult);
+                
+                // Return iterable result
+                return new IterableDiffResult(comparisonResult);
+            });
+
+            return result;
 
         } catch (error) {
             vscode.window.showErrorMessage(`Error comparing structures: ${error}`);
+            return null;
         }
     }
 
@@ -389,33 +479,15 @@ export class HTMLComparator {
     }
 
     private async showComparisonResults(result: ComparisonResult): Promise<void> {
+        // Show a brief notification with summary
         const summary = result.summary;
-        const message = `Comparison Complete!\n\n` +
-            `Total Elements: ${summary.totalElements}\n` +
-            `Added: ${summary.addedElements}\n` +
-            `Removed: ${summary.removedElements}\n` +
-            `Modified: ${summary.modifiedElements}\n` +
-            `Moved: ${summary.movedElements}\n` +
-            `Locator Changes: ${summary.locatorChanges}`;
-
-        const action = await vscode.window.showInformationMessage(
-            message,
-            'View Detailed Diff',
-            'Generate Updated Locators',
-            'Export Report'
-        );
-
-        switch (action) {
-            case 'View Detailed Diff':
-                await vscode.commands.executeCommand('qa-html-capture.viewDiff', result);
-                break;
-            case 'Generate Updated Locators':
-                await vscode.commands.executeCommand('qa-html-capture.generateLocators');
-                break;
-            case 'Export Report':
-                await this.exportComparisonReport(result);
-                break;
-        }
+        const message = `Comparison Complete! ${summary.addedElements} added, ${summary.removedElements} removed, ${summary.modifiedElements} modified, ${summary.movedElements} moved`;
+        
+        // Show brief notification
+        vscode.window.showInformationMessage(message);
+        
+        // Directly open the side-by-side diff view
+        await vscode.commands.executeCommand('qa-html-capture.viewDiff', result);
     }
 
     private async exportComparisonReport(result: ComparisonResult): Promise<void> {

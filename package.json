@@ -48,6 +48,11 @@
         "category": "QA HTML Capture"
       },
       {
+        "command": "qa-html-capture.iterateDiffResults",
+        "title": "Iterate Diff Results",
+        "category": "QA HTML Capture"
+      },
+      {
         "command": "qa-html-capture.captureFromWeb",
         "title": "Capture HTML from Web Page",
         "category": "QA HTML Capture"
@@ -71,6 +76,66 @@
         "command": "qa-html-capture.viewProjectSettings",
         "title": "View Project Settings",
         "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.openBaselineFile",
+        "title": "Open Baseline File",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.refreshPanel",
+        "title": "Refresh Panel",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.showBaselinesFolder",
+        "title": "Show Baselines Folder",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.clearAllBaselines",
+        "title": "Clear All Baselines",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.deleteBaseline",
+        "title": "Delete Baseline",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.selectBaseline",
+        "title": "Select Baseline",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.compareWithBaseline",
+        "title": "Compare with Baseline",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.generateLocatorReport",
+        "title": "Generate Locator Report",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.openPanel",
+        "title": "Open QA HTML Tools Panel",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.refreshPanel",
+        "title": "Refresh Panel",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.showBaselinesFolder",
+        "title": "Show Baselines Folder",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.clearAllBaselines",
+        "title": "Clear All Baselines",
+        "category": "QA HTML Capture"
       }
     ],
     "menus": {
@@ -85,16 +150,43 @@
           "when": "editorLangId == html",
           "group": "qa-html-capture"
         }
-      ]
-    },
-    "views": {
-      "explorer": [
+      ],
+      "view/title": [
         {
-          "id": "qa-html-capture",
-          "name": "QA HTML Capture"
+          "command": "qa-html-capture.refreshPanel",
+          "when": "view == qa-html-capture-panel",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "qa-html-capture.deleteBaseline",
+          "when": "view == qa-html-capture-panel && viewItem == baseline",
+          "group": "inline"
         }
       ]
     },
+    "views": {
+      "qa-html-capture": [
+        {
+          "id": "qa-html-capture-panel",
+          "name": "QA HTML Tools",
+          "when": "true"
+        },
+        {
+          "id": "qa-html-capture-baselines",
+          "name": "Baselines",
+          "when": "true"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "qa-html-capture-baselines",
+        "contents": "Welcome to QA HTML Capture!\n\n[📷 Capture Baseline](command:qa-html-capture.captureBaseline)\n[🔄 Compare Structure](command:qa-html-capture.compareStructure)\n[⚙️ Generate Locators](command:qa-html-capture.generateLocators)\n[🌐 Web Capture](command:qa-html-capture.captureFromWeb)\n\nGet started by capturing your first baseline!",
+        "when": "true"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {

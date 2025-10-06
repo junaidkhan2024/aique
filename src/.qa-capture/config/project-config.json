@@ -1,0 +1,37 @@
+{
+  "projectDetails": {
+    "projectName": "My QA Project",
+    "appType": "web",
+    "webUrl": "https://qaas.digital",
+    "environments": [
+      {
+        "name": "dev",
+        "url": "https://qaas.digital",
+        "isDefault": true
+      }
+    ],
+    "testFramework": "playwright",
+    "designPattern": "pom",
+    "testCaseTypes": [
+      "unit"
+    ],
+    "techStack": [
+      "playwright"
+    ],
+    "language": "python",
+    "languageRating": 2,
+    "hasManualTestCases": false,
+    "wantsManualFlowCapture": true,
+    "captureFrequency": "manual",
+    "teamSize": 1
+  },
+  "metadata": {
+    "version": "1.0.0",
+    "lastUpdated": "2025-10-06T06:24:04.905Z",
+    "createdBy": "QA HTML Capture Extension"
+  },
+  "settings": {
+    "autoSave": true,
+    "backupEnabled": true
+  }
+}

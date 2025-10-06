@@ -8,6 +8,10 @@ import { DiffViewProvider } from './diffViewProvider';
 import { OnboardingWizard } from './onboardingWizard';
 import { SimplePanel } from './simplePanel';
 import { TreeViewProvider } from './treeViewProvider';
+import { FilesTreeProvider, FileItem } from './filesTreeProvider';
+
+// Global reference for cleanup
+let globalOnboardingWizard: OnboardingWizard | null = null;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('QA HTML Structure Capture extension is now active!');
@@ -21,6 +25,13 @@ export function activate(context: vscode.ExtensionContext) {
     const diffViewProvider = new DiffViewProvider(context);
     const onboardingWizard = new OnboardingWizard(context);
     const treeViewProvider = new TreeViewProvider(htmlCaptureProvider);
+    const filesTreeProvider = new FilesTreeProvider(context);
+    
+    // Set global reference for cleanup
+    globalOnboardingWizard = onboardingWizard;
+    
+    // Set the files tree provider reference in onboarding wizard
+    onboardingWizard.setFilesTreeProvider(filesTreeProvider);
 
     // Show onboarding wizard on first activation
     setTimeout(async () => {
@@ -55,9 +66,14 @@ export function activate(context: vscode.ExtensionContext) {
         treeDataProvider: treeViewProvider,
         showCollapseAll: true
     });
+
+    const filesView = vscode.window.createTreeView('qa-html-capture-files', {
+        treeDataProvider: filesTreeProvider,
+        showCollapseAll: true
+    });
     
     // Ensure the views are visible even without a workspace
-    context.subscriptions.push(baselinesView, panelView);
+    context.subscriptions.push(baselinesView, panelView, filesView);
 
     // Create status bar items with higher priority
     const captureButton = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 1000);
@@ -162,9 +178,6 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showErrorMessage(`Error iterating diff results: ${error}`);
             }
         }),
-        vscode.commands.registerCommand('qa-html-capture.deleteBaseline', (item) => {
-            htmlCaptureProvider.deleteBaseline(item);
-        }),
         vscode.commands.registerCommand('qa-html-capture.refresh', () => {
             htmlCaptureProvider.refresh();
         }),
@@ -176,6 +189,229 @@ export function activate(context: vscode.ExtensionContext) {
         }),
         vscode.commands.registerCommand('qa-html-capture.viewProjectSettings', () => {
             onboardingWizard.showProjectSettings();
+        }),
+        vscode.commands.registerCommand('qa-html-capture.viewCapturedMetadata', () => {
+            onboardingWizard.viewCapturedMetadata();
+        }),
+        vscode.commands.registerCommand('qa-html-capture.openProjectConfigFile', () => {
+            onboardingWizard.openProjectConfigFile();
+        }),
+        vscode.commands.registerCommand('qa-html-capture.reloadProjectConfigFromFile', () => {
+            onboardingWizard.reloadProjectConfigFromFile();
+        }),
+        vscode.commands.registerCommand('qa-html-capture.openFile', async (fileItem: FileItem) => {
+            try {
+                const document = await vscode.workspace.openTextDocument(fileItem.filePath);
+                await vscode.window.showTextDocument(document);
+                vscode.window.showInformationMessage(`Opened: ${fileItem.label}`);
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to open file: ${error}`);
+            }
+        }),
+        vscode.commands.registerCommand('qa-html-capture.refreshFiles', () => {
+            filesTreeProvider.refresh();
+            vscode.window.showInformationMessage('Project files refreshed!');
+        }),
+        vscode.commands.registerCommand('qa-html-capture.openFolder', async (fileItem: FileItem) => {
+            try {
+                await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(fileItem.filePath));
+                vscode.window.showInformationMessage(`Opened folder: ${fileItem.label}`);
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to open folder: ${error}`);
+            }
+        }),
+        vscode.commands.registerCommand('qa-html-capture.stopBrowserMonitoring', () => {
+            onboardingWizard.stopBrowserMonitoring();
+        }),
+        vscode.commands.registerCommand('qa-html-capture.testBrowserLaunch', async () => {
+            const testUrl = await vscode.window.showInputBox({
+                prompt: 'Enter URL to test browser launch',
+                placeHolder: 'https://example.com',
+                value: 'https://example.com'
+            });
+            
+            if (testUrl) {
+                try {
+                    await vscode.env.openExternal(vscode.Uri.parse(testUrl));
+                    vscode.window.showInformationMessage(`Testing browser launch with: ${testUrl}`);
+                } catch (error) {
+                    vscode.window.showErrorMessage(`Browser launch test failed: ${error}`);
+                }
+            }
+        }),
+        vscode.commands.registerCommand('qa-html-capture.testNewBrowserWindow', async () => {
+            const testUrl = await vscode.window.showInputBox({
+                prompt: 'Enter URL to test new browser window',
+                placeHolder: 'https://example.com',
+                value: 'https://example.com'
+            });
+            
+            if (testUrl) {
+                try {
+                    await onboardingWizard.openBrowserInEnvironment(testUrl, 'new-window');
+                    vscode.window.showInformationMessage(`Testing new browser window with: ${testUrl}`);
+                } catch (error) {
+                    vscode.window.showErrorMessage(`New browser window test failed: ${error}`);
+                }
+            }
+        }),
+        vscode.commands.registerCommand('qa-html-capture.testIncognitoBrowser', async () => {
+            const testUrl = await vscode.window.showInputBox({
+                prompt: 'Enter URL to test incognito browser',
+                placeHolder: 'https://example.com',
+                value: 'https://example.com'
+            });
+            
+            if (testUrl) {
+                try {
+                    await onboardingWizard.openBrowserInEnvironment(testUrl, 'incognito');
+                    vscode.window.showInformationMessage(`Testing incognito browser with: ${testUrl}`);
+                } catch (error) {
+                    vscode.window.showErrorMessage(`Incognito browser test failed: ${error}`);
+                }
+            }
+        }),
+        vscode.commands.registerCommand('qa-html-capture.clearWorkspaceStorage', () => {
+            const confirm = vscode.window.showWarningMessage(
+                'This will clear all project configuration and metadata for the current workspace. Are you sure?',
+                'Yes, Clear All',
+                'Cancel'
+            );
+            
+            confirm.then((result) => {
+                if (result === 'Yes, Clear All') {
+                    onboardingWizard.clearWorkspaceStorage();
+                }
+            });
+        }),
+        vscode.commands.registerCommand('qa-html-capture.switchProject', async () => {
+            await onboardingWizard.switchProject();
+        }),
+        vscode.commands.registerCommand('qa-html-capture.showCurrentProject', async () => {
+            const currentProject = onboardingWizard.getCurrentProjectName();
+            if (currentProject) {
+                vscode.window.showInformationMessage(`Current project: ${currentProject}`);
+            } else {
+                vscode.window.showInformationMessage('No active project found.');
+            }
+        }),
+        vscode.commands.registerCommand('qa-html-capture.showUploadedFile', async () => {
+            try {
+                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                if (workspaceFolder) {
+                    const projectConfigPath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'config', 'project-config.json');
+                    if (fs.existsSync(projectConfigPath)) {
+                        const configContent = fs.readFileSync(projectConfigPath, 'utf8');
+                        const config = JSON.parse(configContent);
+                        const uploadedFile = config.projectDetails?.manualTestCasesFile;
+                        
+                        if (uploadedFile) {
+                            const action = await vscode.window.showInformationMessage(
+                                `Uploaded test cases file: ${uploadedFile}`,
+                                'Open File',
+                                'Copy Path',
+                                'Cancel'
+                            );
+                            
+                            if (action === 'Open File') {
+                                const fileUri = vscode.Uri.file(uploadedFile);
+                                await vscode.window.showTextDocument(fileUri);
+                            } else if (action === 'Copy Path') {
+                                await vscode.env.clipboard.writeText(uploadedFile);
+                                vscode.window.showInformationMessage('File path copied to clipboard');
+                            }
+                        } else {
+                            vscode.window.showInformationMessage('No test cases file was uploaded for this project.');
+                        }
+                    } else {
+                        vscode.window.showInformationMessage('No project configuration found.');
+                    }
+                } else {
+                    vscode.window.showInformationMessage('No workspace folder found.');
+                }
+            } catch (error) {
+                vscode.window.showErrorMessage(`Error reading project config: ${error}`);
+            }
+        }),
+        vscode.commands.registerCommand('qa-html-capture.listProjects', async () => {
+            try {
+                const projects = await onboardingWizard.listProjects();
+                
+                if (projects.length === 0) {
+                    vscode.window.showInformationMessage('No projects found. Create a new project first.');
+                    return;
+                }
+
+                const currentProject = onboardingWizard.getCurrentProjectName();
+                const projectItems = projects.map(project => ({
+                    label: project.name === currentProject ? `$(check) ${project.name} (Current)` : project.name,
+                    description: `Last modified: ${project.lastModified.toLocaleDateString()}`,
+                    value: project.name
+                }));
+
+                const selectedProject = await vscode.window.showQuickPick(projectItems, {
+                    placeHolder: 'Select a project to switch to',
+                    title: 'Available Projects'
+                });
+
+                if (selectedProject) {
+                    await onboardingWizard.switchToProject(selectedProject.value);
+                }
+            } catch (error) {
+                vscode.window.showErrorMessage(`Error listing projects: ${error}`);
+            }
+        }),
+        vscode.commands.registerCommand('qa-html-capture.addTestInteraction', async () => {
+            const action = await vscode.window.showQuickPick([
+                { label: 'Click', value: 'click' },
+                { label: 'Type', value: 'type' },
+                { label: 'Navigate', value: 'navigate' },
+                { label: 'Wait', value: 'wait' },
+                { label: 'Hover', value: 'hover' }
+            ], {
+                placeHolder: 'Select interaction type',
+                title: 'Add Test Interaction'
+            });
+            
+            if (action) {
+                const element = await vscode.window.showInputBox({
+                    prompt: 'Element name (optional)',
+                    placeHolder: 'e.g., login-button'
+                });
+                
+                const selector = await vscode.window.showInputBox({
+                    prompt: 'CSS Selector (optional)',
+                    placeHolder: 'e.g., #login-btn'
+                });
+                
+                let value = '';
+                if (action.value === 'type') {
+                    value = await vscode.window.showInputBox({
+                        prompt: 'Value to type',
+                        placeHolder: 'e.g., test@example.com'
+                    }) || '';
+                }
+                
+                const description = await vscode.window.showInputBox({
+                    prompt: 'Description',
+                    placeHolder: 'e.g., Click on login button'
+                });
+                
+                if (description) {
+                    try {
+                        await onboardingWizard.addManualInteraction({
+                            action: action.value as any,
+                            element: element || undefined,
+                            selector: selector || undefined,
+                            value: value || undefined,
+                            description: description
+                        });
+                        vscode.window.showInformationMessage(`Added ${action.value} interaction: ${description}`);
+                    } catch (error) {
+                        vscode.window.showErrorMessage(`Failed to add interaction: ${error}`);
+                    }
+                }
+            }
         }),
         vscode.commands.registerCommand('qa-html-capture.openBaselineFile', async (baseline) => {
             console.log('openBaselineFile called with:', baseline);
@@ -320,4 +556,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
     console.log('QA HTML Structure Capture extension is now deactivated!');
+    
+    // Cleanup resources
+    if (globalOnboardingWizard) {
+        globalOnboardingWizard.cleanup();
+        globalOnboardingWizard = null;
+    }
 }

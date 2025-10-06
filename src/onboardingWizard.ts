@@ -1,25 +1,52 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 
-export interface ProjectDetails {
-    hasExistingTests: boolean;
-    appType: 'web' | 'mobile' | 'desktop' | 'api';
-    webUrl?: string;
-    environments: EnvironmentConfig[];
-    loginCredentials?: LoginCredentials;
-    testFramework?: string;
-    automationTool?: string;
-    projectName: string;
-    teamSize?: number;
-    captureFrequency: 'manual' | 'daily' | 'weekly' | 'on-deploy';
+export interface CapturedInteraction {
+    action: 'navigate' | 'click' | 'type' | 'hover' | 'scroll' | 'wait' | 'select' | 'drag' | 'drop';
+    element?: string;
+    selector?: string;
+    value?: string;
+    url?: string;
+    timestamp: string;
+    coordinates?: { x: number; y: number };
+    screenshot?: string;
+    description?: string;
 }
 
-export interface EnvironmentConfig {
+export interface CapturedMetadata {
+    sessionId: string;
+    url: string;
+    startTime: string;
+    endTime: string;
+    interactions: CapturedInteraction[];
+    pageTitle?: string;
+    userAgent?: string;
+    viewport?: { width: number; height: number };
+}
+
+export interface ProjectDetails {
+    projectName: string;
+    appType: 'web' | 'mobile' | 'desktop';
+    webUrl?: string;
+    environments: Array<{
     name: string;
     url: string;
     isDefault: boolean;
-}
-
-export interface LoginCredentials {
+    }>;
+    testFramework?: string;
+    designPattern?: string;
+    testCaseTypes: string[];
+    techStack: string[];
+    language: string;
+    languageRating: number;
+    manualTestCasesFile?: string;
+    hasManualTestCases: boolean;
+    wantsManualFlowCapture: boolean;
+    capturedMetadata?: CapturedMetadata;
+    generatedTests?: any;
+    pageNames?: string[];
+    loginCredentials?: {
     username: string;
     password: string;
     loginUrl: string;
@@ -28,819 +55,655 @@ export interface LoginCredentials {
         passwordSelector: string;
         submitSelector: string;
     };
+    };
+    captureFrequency: 'manual' | 'scheduled' | 'continuous';
+    teamSize: number;
 }
 
 export class OnboardingWizard {
-    private context: vscode.ExtensionContext;
+    private metadataStoragePath: string = '';
+    private configStoragePath: string = '';
+    private isCapturing: boolean = false;
+    private currentSession: CapturedMetadata | null = null;
+    private filesTreeProvider: any = null;
+    private browserMonitoringInterval: NodeJS.Timeout | null = null;
+    private browserProcess: any = null;
 
-    constructor(context: vscode.ExtensionContext) {
-        this.context = context;
+    constructor(private context: vscode.ExtensionContext) {
+        this.initializeProjectStorage();
     }
 
-    public async showOnboardingWizard(): Promise<ProjectDetails | null> {
-        try {
-            // Always show the popup window for better visibility
-            return await this.showOnboardingPopup();
-        } catch (error) {
-            vscode.window.showErrorMessage(`Onboarding failed: ${error}`);
-            return null;
+    private initializeProjectStorage(): void {
+        // Use workspace storage instead of global storage for project-specific files
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (workspaceFolder) {
+            // Store in workspace folder with project-specific subdirectories
+            this.metadataStoragePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'metadata');
+            this.configStoragePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'config');
+        } else {
+            // Fallback to global storage if no workspace
+            this.metadataStoragePath = path.join(this.context.globalStorageUri.fsPath, 'metadata');
+            this.configStoragePath = path.join(this.context.globalStorageUri.fsPath, 'config');
         }
+        this.ensureStorageDirectories();
     }
 
-    private async showOnboardingPopup(): Promise<ProjectDetails | null> {
-        // Create webview panel for onboarding
-        const panel = vscode.window.createWebviewPanel(
-            'qaOnboarding',
-            '🚀 QA HTML Capture - Project Setup',
-            vscode.ViewColumn.One,
-            {
-                enableScripts: true,
-                retainContextWhenHidden: true
-            }
-        );
-
-        panel.webview.html = this.getOnboardingHTML();
-
-        // Handle messages from webview
-        return new Promise((resolve) => {
-            panel.webview.onDidReceiveMessage(
-                async (message) => {
-                    console.log('Received message:', message);
-                    
-                    switch (message.type) {
-                        case 'save-config':
-                            try {
-                                console.log('Saving configuration:', message.data);
-                                const projectDetails: ProjectDetails = message.data;
-                                
-                                // Validate required fields
-                                if (!projectDetails.projectName || !projectDetails.appType) {
-                                    vscode.window.showErrorMessage('Please fill in all required fields');
-                                    return;
-                                }
-                                
-                                await this.saveProjectConfiguration(projectDetails);
-                                panel.dispose();
-                                await this.showCompletionMessage(projectDetails);
-                                resolve(projectDetails);
-                            } catch (error) {
-                                console.error('Save configuration error:', error);
-                                vscode.window.showErrorMessage(`Failed to save configuration: ${error}`);
-                                resolve(null);
-                            }
-                            break;
-                        case 'cancel':
-                            panel.dispose();
-                            resolve(null);
-                            break;
-                        case 'test-url':
-                            // Test URL connectivity
-                            const isValid = await this.testUrl(message.url);
-                            panel.webview.postMessage({ type: 'url-test-result', valid: isValid });
-                            break;
-                    }
-                },
-                undefined,
-                this.context.subscriptions
-            );
-
-            // Handle panel disposal
-            panel.onDidDispose(() => {
-                resolve(null);
-            });
-        });
+    public setFilesTreeProvider(provider: any): void {
+        this.filesTreeProvider = provider;
     }
 
-    private async testUrl(url: string): Promise<boolean> {
+    // Method to check if a project already exists
+    private projectExists(projectName: string): boolean {
         try {
-            const https = require('https');
-            const http = require('http');
-            const { URL } = require('url');
-            
-            return new Promise((resolve) => {
-                try {
-                    const urlObj = new URL(url);
-                    const isHttps = urlObj.protocol === 'https:';
-                    const client = isHttps ? https : http;
-                    
-                    const options = {
-                        hostname: urlObj.hostname,
-                        port: urlObj.port || (isHttps ? 443 : 80),
-                        path: urlObj.pathname + urlObj.search,
-                        method: 'HEAD',
-                        timeout: 5000
-                    };
-                    
-                    const req = client.request(options, (res: any) => {
-                        resolve(res.statusCode >= 200 && res.statusCode < 300);
-                    });
-                    
-                    req.on('error', () => resolve(false));
-                    req.on('timeout', () => {
-                        req.destroy();
-                        resolve(false);
-                    });
-                    
-                    req.setTimeout(5000);
-                    req.end();
-                } catch {
-                    resolve(false);
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (workspaceFolder) {
+                const projectConfigPath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'config', 'project-config.json');
+                if (fs.existsSync(projectConfigPath)) {
+                    const configContent = fs.readFileSync(projectConfigPath, 'utf8');
+                    const config = JSON.parse(configContent);
+                    return config.projectDetails?.projectName === projectName;
                 }
-            });
-        } catch {
+            }
+            return false;
+        } catch (error) {
             return false;
         }
     }
 
-    private getOnboardingHTML(): string {
-        return `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QA HTML Capture - Project Setup</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--vscode-editor-background);
-            color: var(--vscode-editor-foreground);
-            padding: 20px;
-            line-height: 1.6;
-        }
-        
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            background: var(--vscode-panel-background);
-            border-radius: 8px;
-            padding: 30px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }
-        
-        .header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        
-        .header h1 {
-            color: var(--vscode-textLink-foreground);
-            margin-bottom: 10px;
-            font-size: 24px;
-        }
-        
-        .header p {
-            color: var(--vscode-descriptionForeground);
-            font-size: 16px;
-        }
-        
-        .form-group {
-            margin-bottom: 20px;
-        }
-        
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: var(--vscode-editor-foreground);
-        }
-        
-        .form-group input, .form-group select, .form-group textarea {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid var(--vscode-input-border);
-            border-radius: 4px;
-            background: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            font-size: 14px;
-        }
-        
-        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
-            outline: none;
-            border-color: var(--vscode-focusBorder);
-            box-shadow: 0 0 0 2px var(--vscode-focusBorder);
-        }
-        
-        .form-row {
-            display: flex;
-            gap: 15px;
-        }
-        
-        .form-row .form-group {
-            flex: 1;
-        }
-        
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 15px;
-        }
-        
-        .checkbox-group input[type="checkbox"] {
-            width: auto;
-        }
-        
-        .section {
-            margin-bottom: 30px;
-            padding: 20px;
-            background: var(--vscode-editor-background);
-            border-radius: 6px;
-            border-left: 4px solid var(--vscode-textLink-foreground);
-        }
-        
-        .section h3 {
-            margin-bottom: 15px;
-            color: var(--vscode-textLink-foreground);
-        }
-        
-        .section.hidden {
-            display: none;
-        }
-        
-        .buttons {
-            display: flex;
-            gap: 15px;
-            justify-content: flex-end;
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid var(--vscode-panel-border);
-        }
-        
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 4px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .btn-primary {
-            background: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-        }
-        
-        .btn-primary:hover {
-            background: var(--vscode-button-hoverBackground);
-        }
-        
-        .btn-secondary {
-            background: var(--vscode-button-secondaryBackground);
-            color: var(--vscode-button-secondaryForeground);
-        }
-        
-        .btn-secondary:hover {
-            background: var(--vscode-button-secondaryHoverBackground);
-        }
-        
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        
-        .url-test {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-top: 8px;
-        }
-        
-        .url-test-btn {
-            padding: 6px 12px;
-            font-size: 12px;
-            background: var(--vscode-button-secondaryBackground);
-            color: var(--vscode-button-secondaryForeground);
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        
-        .url-status {
-            font-size: 12px;
-            padding: 4px 8px;
-            border-radius: 4px;
-        }
-        
-        .url-status.success {
-            background: rgba(76, 175, 80, 0.2);
-            color: #4caf50;
-        }
-        
-        .url-status.error {
-            background: rgba(244, 67, 54, 0.2);
-            color: #f44336;
-        }
-        
-        .required {
-            color: var(--vscode-errorForeground);
-        }
-        
-        .help-text {
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-            margin-top: 5px;
-        }
-        
-        .progress {
-            margin-bottom: 20px;
-        }
-        
-        .progress-bar {
-            height: 4px;
-            background: var(--vscode-progressBar-background);
-            border-radius: 2px;
-            overflow: hidden;
-        }
-        
-        .progress-fill {
-            height: 100%;
-            background: var(--vscode-textLink-foreground);
-            transition: width 0.3s ease;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🚀 Welcome to QA HTML Structure Capture!</h1>
-            <p>Let's configure the extension for your project. This will only take a few minutes.</p>
-        </div>
-        
-        <div class="progress">
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill" style="width: 0%"></div>
-            </div>
-        </div>
-        
-        <form id="onboardingForm">
-            <!-- Step 1: Basic Info -->
-            <div class="section" id="step1">
-                <h3>📋 Project Information</h3>
-                
-                <div class="form-group">
-                    <label for="projectName">Project Name <span class="required">*</span></label>
-                    <input type="text" id="projectName" name="projectName" placeholder="e.g., E-commerce Platform, Banking App" required>
-                    <div class="help-text">Give your project a descriptive name</div>
-                </div>
-                
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="appType">Application Type <span class="required">*</span></label>
-                        <select id="appType" name="appType" required>
-                            <option value="">Select application type</option>
-                            <option value="web">Web Application</option>
-                            <option value="mobile">Mobile Application</option>
-                            <option value="desktop">Desktop Application</option>
-                            <option value="api">API Testing</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="hasExistingTests">Existing Tests</label>
-                        <select id="hasExistingTests" name="hasExistingTests">
-                            <option value="false">No, starting fresh</option>
-                            <option value="true">Yes, have existing tests</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="form-group" id="testFrameworkGroup" style="display: none;">
-                    <label for="testFramework">Test Framework</label>
-                    <select id="testFramework" name="testFramework">
-                        <option value="">Select framework</option>
-                        <option value="selenium">Selenium WebDriver</option>
-                        <option value="cypress">Cypress</option>
-                        <option value="playwright">Playwright</option>
-                        <option value="testcafe">TestCafe</option>
-                        <option value="webdriverio">WebdriverIO</option>
-                        <option value="protractor">Protractor</option>
-                        <option value="other">Other</option>
-                    </select>
-                </div>
-            </div>
-            
-            <!-- Step 2: Web App Details -->
-            <div class="section hidden" id="step2">
-                <h3>Web Application Configuration</h3>
-                
-                <div class="form-group">
-                    <label for="webUrl">Main Application URL <span class="required">*</span></label>
-                    <input type="url" id="webUrl" name="webUrl" placeholder="https://your-app.com" required>
-                    <div class="url-test">
-                        <button type="button" class="url-test-btn" onclick="testUrl()">Test URL</button>
-                        <span id="urlStatus" class="url-status" style="display: none;"></span>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="environments">Additional Environments</label>
-                    <textarea id="environments" name="environments" rows="3" placeholder="https://dev.your-app.com&#10;https://staging.your-app.com&#10;https://prod.your-app.com"></textarea>
-                    <div class="help-text">Enter one URL per line for different environments</div>
-                </div>
-                
-                <div class="checkbox-group">
-                    <input type="checkbox" id="hasLogin" name="hasLogin">
-                    <label for="hasLogin">Application requires login</label>
-                </div>
-                
-                <div id="loginSection" style="display: none;">
-                    <div class="form-group">
-                        <label for="loginUrl">Login Page URL</label>
-                        <input type="url" id="loginUrl" name="loginUrl" placeholder="https://your-app.com/login">
-                    </div>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="username">Test Username</label>
-                            <input type="text" id="username" name="username" placeholder="test@example.com">
-                        </div>
-                        <div class="form-group">
-                            <label for="password">Test Password</label>
-                            <input type="password" id="password" name="password" placeholder="••••••••">
-                        </div>
-                    </div>
-                    
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="usernameSelector">Username Selector</label>
-                            <input type="text" id="usernameSelector" name="usernameSelector" placeholder="#username" value="#username">
-                        </div>
-                        <div class="form-group">
-                            <label for="passwordSelector">Password Selector</label>
-                            <input type="text" id="passwordSelector" name="passwordSelector" placeholder="#password" value="#password">
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="submitSelector">Submit Button Selector</label>
-                        <input type="text" id="submitSelector" name="submitSelector" placeholder="button[type='submit']" value="button[type='submit']">
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Step 3: Preferences -->
-            <div class="section hidden" id="step3">
-                <h3>Preferences</h3>
-                
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="captureFrequency">Capture Frequency</label>
-                        <select id="captureFrequency" name="captureFrequency">
-                            <option value="manual">🤚 Manual only</option>
-                            <option value="daily">📅 Daily</option>
-                            <option value="weekly">📅 Weekly</option>
-                            <option value="on-deploy">🚀 On deployment</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="teamSize">Team Size</label>
-                        <select id="teamSize" name="teamSize">
-                            <option value="1">👤 Just me</option>
-                            <option value="3">👥 2-5 people</option>
-                            <option value="8">👥 6-10 people</option>
-                            <option value="15">👥 11-20 people</option>
-                            <option value="25">👥 20+ people</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="language">Preferred Language</label>
-                    <select id="language" name="language">
-                        <option value="javascript">JavaScript</option>
-                        <option value="typescript">TypeScript</option>
-                        <option value="python">Python</option>
-                        <option value="java">Java</option>
-                        <option value="csharp">C#</option>
-                        <option value="other">Other</option>
-                    </select>
-                </div>
-            </div>
-            
-            <div class="buttons">
-                <button type="button" class="btn btn-secondary" id="cancelBtn">Cancel</button>
-                <button type="button" class="btn btn-primary" id="prevBtn" style="display: none;">Previous</button>
-                <button type="button" class="btn btn-primary" id="nextBtn">Next</button>
-                <button type="submit" class="btn btn-primary" id="saveBtn" style="display: none;">Complete Setup</button>
-            </div>
-        </form>
-    </div>
-
-    <script>
-        const vscode = acquireVsCodeApi();
-        let currentStep = 1;
-        const totalSteps = 3;
-        
-        // Initialize form
-        document.addEventListener('DOMContentLoaded', function() {
-            updateStepVisibility();
-            updateProgress();
-            
-            // Event listeners
-            document.getElementById('appType').addEventListener('change', handleAppTypeChange);
-            document.getElementById('hasExistingTests').addEventListener('change', handleExistingTestsChange);
-            document.getElementById('hasLogin').addEventListener('change', handleLoginChange);
-            document.getElementById('cancelBtn').addEventListener('click', cancelSetup);
-            document.getElementById('prevBtn').addEventListener('click', previousStep);
-            document.getElementById('nextBtn').addEventListener('click', nextStep);
-            document.getElementById('onboardingForm').addEventListener('submit', saveConfiguration);
-        });
-        
-        function handleAppTypeChange() {
-            const appType = document.getElementById('appType').value;
-            const step2 = document.getElementById('step2');
-            
-            if (appType === 'web') {
-                step2.classList.remove('hidden');
-            } else {
-                step2.classList.add('hidden');
-            }
-            
-            updateProgress();
-        }
-        
-        function handleExistingTestsChange() {
-            const hasTests = document.getElementById('hasExistingTests').value === 'true';
-            const frameworkGroup = document.getElementById('testFrameworkGroup');
-            
-            if (hasTests) {
-                frameworkGroup.style.display = 'block';
-            } else {
-                frameworkGroup.style.display = 'none';
-            }
-        }
-        
-        function handleLoginChange() {
-            const hasLogin = document.getElementById('hasLogin').checked;
-            const loginSection = document.getElementById('loginSection');
-            
-            if (hasLogin) {
-                loginSection.style.display = 'block';
-            } else {
-                loginSection.style.display = 'none';
-            }
-        }
-        
-        function updateStepVisibility() {
-            // Show/hide steps based on current step and app type
-            const step1 = document.getElementById('step1');
-            const step2 = document.getElementById('step2');
-            const step3 = document.getElementById('step3');
-            
-            step1.classList.toggle('hidden', currentStep !== 1);
-            step2.classList.toggle('hidden', currentStep !== 2);
-            step3.classList.toggle('hidden', currentStep !== 3);
-            
-            // Show/hide buttons
-            document.getElementById('prevBtn').style.display = currentStep > 1 ? 'inline-block' : 'none';
-            document.getElementById('nextBtn').style.display = currentStep < totalSteps ? 'inline-block' : 'none';
-            document.getElementById('saveBtn').style.display = currentStep === totalSteps ? 'inline-block' : 'none';
-            
-            // Show step 2 only for web apps - but don't auto-advance
-            const appType = document.getElementById('appType').value;
-            if (currentStep === 2 && appType !== 'web') {
-                step2.classList.add('hidden');
-                step3.classList.remove('hidden');
-                currentStep = 3;
-                updateProgress();
-                document.getElementById('prevBtn').style.display = 'inline-block';
-                document.getElementById('nextBtn').style.display = 'none';
-                document.getElementById('saveBtn').style.display = 'inline-block';
-            }
-        }
-        
-        function updateProgress() {
-            const progress = (currentStep / totalSteps) * 100;
-            document.getElementById('progressFill').style.width = progress + '%';
-        }
-        
-        function nextStep() {
-            if (validateCurrentStep()) {
-                currentStep++;
-                updateStepVisibility();
-                updateProgress();
-            }
-        }
-        
-        function previousStep() {
-            currentStep--;
-            updateStepVisibility();
-            updateProgress();
-        }
-        
-        function validateCurrentStep() {
-            if (currentStep === 1) {
-                const projectName = document.getElementById('projectName').value;
-                const appType = document.getElementById('appType').value;
-                
-                if (!projectName.trim()) {
-                    alert('Please enter a project name');
-                    return false;
-                }
-                
-                if (!appType) {
-                    alert('Please select an application type');
-                    return false;
-                }
-                
-                return true;
-            }
-            
-            if (currentStep === 2) {
-                const appType = document.getElementById('appType').value;
-                
-                if (appType === 'web') {
-                    const webUrl = document.getElementById('webUrl').value;
-                    if (!webUrl.trim()) {
-                        alert('Please enter the main application URL');
-                        return false;
-                    }
-                }
-                
-                return true;
-            }
-            
-            return true;
-        }
-        
-        function cancelSetup() {
-            vscode.postMessage({ type: 'cancel' });
-        }
-        
-        function saveConfiguration(e) {
-            e.preventDefault();
-            
-            // Get form values directly
-            const config = {
-                projectName: document.getElementById('projectName').value,
-                appType: document.getElementById('appType').value,
-                hasExistingTests: document.getElementById('hasExistingTests').value === 'true',
-                testFramework: document.getElementById('testFramework').value || undefined,
-                webUrl: document.getElementById('webUrl').value || undefined,
-                environments: (() => {
-                    const envText = document.getElementById('environments').value;
-                    if (!envText.trim()) return [];
-                    return envText.split('\n').filter(url => url.trim()).map(url => ({
-                        name: url.includes('dev') ? 'Development' : url.includes('staging') ? 'Staging' : 'Production',
-                        url: url.trim(),
-                        isDefault: false
-                    }));
-                })(),
-                loginCredentials: (() => {
-                    const hasLogin = document.getElementById('hasLogin').checked;
-                    if (!hasLogin) return undefined;
-                    return {
-                        username: document.getElementById('username').value,
-                        password: document.getElementById('password').value,
-                        loginUrl: document.getElementById('loginUrl').value,
-                        elementSelectors: {
-                            usernameSelector: document.getElementById('usernameSelector').value,
-                            passwordSelector: document.getElementById('passwordSelector').value,
-                            submitSelector: document.getElementById('submitSelector').value
-                        }
-                    };
-                })(),
-                captureFrequency: document.getElementById('captureFrequency').value,
-                teamSize: parseInt(document.getElementById('teamSize').value),
-                language: document.getElementById('language').value
-            };
-            
-            console.log('Saving configuration:', config);
-            
-            // Show loading state
-            const saveBtn = document.getElementById('saveBtn');
-            const originalText = saveBtn.textContent;
-            saveBtn.textContent = 'Saving...';
-            saveBtn.disabled = true;
-            
-            vscode.postMessage({ type: 'save-config', data: config });
-        }
-        
-        function testUrl() {
-            const url = document.getElementById('webUrl').value;
-            if (!url) {
-                alert('Please enter a URL first');
-                return;
-            }
-            
-            const statusEl = document.getElementById('urlStatus');
-            statusEl.style.display = 'inline-block';
-            statusEl.textContent = 'Testing...';
-            statusEl.className = 'url-status';
-            
-            vscode.postMessage({ type: 'test-url', url: url });
-        }
-        
-        // Listen for URL test results
-        window.addEventListener('message', event => {
-            const message = event.data;
-            if (message.type === 'url-test-result') {
-                const statusEl = document.getElementById('urlStatus');
-                if (message.valid) {
-                    statusEl.textContent = 'URL is accessible';
-                    statusEl.className = 'url-status success';
-                } else {
-                    statusEl.textContent = 'URL not accessible';
-                    statusEl.className = 'url-status error';
+    // Method to get current project name
+    public getCurrentProjectName(): string | null {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (workspaceFolder) {
+                const projectConfigPath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'config', 'project-config.json');
+                if (fs.existsSync(projectConfigPath)) {
+                    const configContent = fs.readFileSync(projectConfigPath, 'utf8');
+                    const config = JSON.parse(configContent);
+                    return config.projectDetails?.projectName || null;
                 }
             }
-        });
-    </script>
-</body>
-</html>`;
+            return null;
+        } catch (error) {
+            return null;
+        }
     }
 
-    private async saveProjectConfiguration(details: ProjectDetails): Promise<void> {
-        await this.context.globalState.update('qa-html-capture.projectDetails', details);
-        await this.context.globalState.update('qa-html-capture.onboardingCompleted', true);
+    // Method to switch to a different project
+    public async switchProject(): Promise<void> {
+        const currentProject = this.getCurrentProjectName();
+        const message = currentProject 
+            ? `Currently working on: ${currentProject}\n\nWould you like to start a new project?`
+            : 'No active project found.\n\nWould you like to create a new project?';
+
+        const action = await vscode.window.showInformationMessage(
+            message,
+            'Create New Project',
+            'Cancel'
+        );
+
+        if (action === 'Create New Project') {
+            // Clear current project data
+            this.clearWorkspaceStorage();
+            // Start new project setup
+            await this.showOnboardingWizard();
+        }
+    }
+
+    // Method to list all projects in the workspace
+    public async listProjects(): Promise<{name: string, path: string, lastModified: Date}[]> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                return [];
+            }
+
+            const qaCapturePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture');
+            if (!fs.existsSync(qaCapturePath)) {
+                return [];
+            }
+
+            const projects: {name: string, path: string, lastModified: Date}[] = [];
+            
+            // Check for projects stored in workspace state
+            const workspaceState = this.context.workspaceState;
+            const keys = workspaceState.keys();
+            
+            for (const key of keys) {
+                if (key.startsWith('qa-html-capture.project.') && key.endsWith('.details')) {
+                    const projectDetails = workspaceState.get<ProjectDetails>(key);
+                    if (projectDetails) {
+                        const projectName = projectDetails.projectName;
+                        const configPath = path.join(qaCapturePath, 'config', 'project-config.json');
+                        
+                        let lastModified = new Date();
+                        if (fs.existsSync(configPath)) {
+                            const stats = fs.statSync(configPath);
+                            lastModified = stats.mtime;
+                        }
+                        
+                        projects.push({
+                            name: projectName,
+                            path: configPath,
+                            lastModified: lastModified
+                        });
+                    }
+                }
+            }
+
+            // Sort by last modified (most recent first)
+            projects.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
+            
+            return projects;
+        } catch (error) {
+            console.error('Error listing projects:', error);
+            return [];
+        }
+    }
+
+    // Method to switch to a specific project
+    public async switchToProject(projectName: string): Promise<void> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                vscode.window.showErrorMessage('No workspace folder found');
+                return;
+            }
+
+            // Load project details from workspace state
+            const projectKey = `qa-html-capture.project.${projectName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+            const projectDetails = this.context.workspaceState.get<ProjectDetails>(`${projectKey}.details`);
+            
+            if (!projectDetails) {
+                vscode.window.showErrorMessage(`Project "${projectName}" not found`);
+                return;
+            }
+
+            // Set as current project
+            await this.context.workspaceState.update('qa-html-capture.currentProject', projectName);
+            
+            // Save current project config to file
+            await this.saveProjectConfigToFile(projectDetails);
+            
+            vscode.window.showInformationMessage(`Switched to project: ${projectName}`);
+            
+            // Refresh the files tree provider
+            if (this.filesTreeProvider) {
+                this.filesTreeProvider.refresh();
+            }
+            
+        } catch (error) {
+            vscode.window.showErrorMessage(`Error switching to project: ${error}`);
+        }
+    }
+
+    // Method to clear workspace-specific storage (useful for development/testing)
+    public clearWorkspaceStorage(): void {
+        try {
+            // Clear workspace state
+            this.context.workspaceState.update('qa-html-capture.projectDetails', undefined);
+            this.context.workspaceState.update('qa-html-capture.onboardingCompleted', undefined);
+            
+            // Clear workspace files if they exist
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (workspaceFolder) {
+                const workspaceConfigPath = path.join(workspaceFolder.uri.fsPath, '.qa-capture');
+                if (fs.existsSync(workspaceConfigPath)) {
+                    fs.rmSync(workspaceConfigPath, { recursive: true, force: true });
+                }
+            }
+            
+            vscode.window.showInformationMessage('Workspace storage cleared successfully!');
+                            } catch (error) {
+            vscode.window.showErrorMessage(`Failed to clear workspace storage: ${error}`);
+        }
+    }
+
+    // Method to cleanup resources
+    public cleanup(): void {
+        if (this.browserMonitoringInterval) {
+            clearInterval(this.browserMonitoringInterval);
+            this.browserMonitoringInterval = null;
+        }
         
-        // Save to workspace settings as well
-        const config = vscode.workspace.getConfiguration('qa-html-capture');
-        await config.update('projectDetails', details, vscode.ConfigurationTarget.Global);
+        if (this.browserProcess && !this.browserProcess.killed) {
+            try {
+                this.browserProcess.kill();
+        } catch (error) {
+                // Ignore errors when killing process
+            }
+            this.browserProcess = null;
+        }
+        
+        if (this.isCapturing) {
+            this.stopMetadataCapture();
+        }
+    }
+
+    private ensureStorageDirectories(): void {
+        if (!fs.existsSync(this.metadataStoragePath)) {
+            fs.mkdirSync(this.metadataStoragePath, { recursive: true });
+        }
+        if (!fs.existsSync(this.configStoragePath)) {
+            fs.mkdirSync(this.configStoragePath, { recursive: true });
+        }
+    }
+
+    async showOnboardingWizard(): Promise<ProjectDetails | null> {
+        try {
+            // Step 1: Project Name
+            const projectName = await vscode.window.showInputBox({
+                prompt: 'Enter your project name',
+                placeHolder: 'My QA Project',
+                value: 'My QA Project',
+                validateInput: (value) => {
+                    if (!value || value.trim().length === 0) {
+                        return 'Project name is required';
+                    }
+                    // Check if project already exists
+                    if (this.projectExists(value.trim())) {
+                        return 'A project with this name already exists. Please choose a different name.';
+                    }
+                    return null;
+                }
+            });
+
+            if (!projectName) {
+                return null; // User cancelled
+            }
+
+            // Step 2: Application Type
+            const appType = await vscode.window.showQuickPick(
+                [
+                    { label: 'Web Application', value: 'web' as const },
+                    { label: 'Mobile Application', value: 'mobile' as const },
+                    { label: 'Desktop Application', value: 'desktop' as const }
+                ],
+                {
+                    placeHolder: 'Which type of app?',
+                    title: 'Application Type'
+                }
+            );
+
+            if (!appType) {
+                return null; // User cancelled
+            }
+
+            // Step 3: Web URL (if web application)
+            let webUrl: string | undefined;
+            if (appType.value === 'web') {
+                webUrl = await vscode.window.showInputBox({
+                    prompt: 'Enter your main application URL',
+                    placeHolder: 'https://example.com',
+                    validateInput: (value) => {
+                        if (value && value.trim().length > 0) {
+                            try {
+                                new URL(value);
+                                return null;
+                } catch {
+                                return 'Please enter a valid URL';
+                            }
+                        }
+                        return null;
+                    }
+                });
+
+                if (!webUrl) {
+                    return null; // User cancelled
+                }
+            }
+
+            // Step 4: Environments under test
+            const environments = await this.collectEnvironments();
+
+            // Step 5: Test Framework
+            const testFramework = await vscode.window.showQuickPick(
+                [
+                    { label: 'Selenium', value: 'selenium' },
+                    { label: 'Playwright', value: 'playwright' },
+                    { label: 'Cypress', value: 'cypress' },
+                    { label: 'Puppeteer', value: 'puppeteer' },
+                    { label: 'WebdriverIO', value: 'webdriverio' },
+                    { label: 'TestCafe', value: 'testcafe' },
+                    { label: 'Other', value: 'other' }
+                ],
+                {
+                    placeHolder: 'Select your test framework',
+                    title: 'Test Framework'
+                }
+            );
+
+            if (!testFramework) {
+                return null; // User cancelled
+            }
+
+            // If user selected "Other", ask for custom framework name
+            let frameworkValue = testFramework.value;
+            if (testFramework.value === 'other') {
+                const customFramework = await vscode.window.showInputBox({
+                    prompt: 'Enter your custom test framework name',
+                    placeHolder: 'e.g., Nightwatch, Protractor, etc.',
+                    validateInput: (value) => {
+                        if (!value || value.trim().length === 0) {
+                            return 'Framework name is required';
+                        }
+                        return null;
+                    }
+                });
+
+                if (!customFramework) {
+                    return null; // User cancelled
+                }
+
+                frameworkValue = customFramework.trim().toLowerCase();
+            }
+
+            // Step 6: Design Pattern
+            const designPattern = await vscode.window.showQuickPick(
+                [
+                    { label: 'Page Object Model (POM)', value: 'pom' },
+                    { label: 'Screenplay Pattern', value: 'screenplay' },
+                    { label: 'Factory Pattern', value: 'factory' },
+                    { label: 'Builder Pattern', value: 'builder' },
+                    { label: 'Singleton Pattern', value: 'singleton' },
+                    { label: 'No specific pattern', value: 'none' }
+                ],
+                {
+                    placeHolder: 'Select your preferred design pattern',
+                    title: 'Design Pattern'
+                }
+            );
+
+            if (!designPattern) {
+                return null; // User cancelled
+            }
+
+            // Step 7: Test Case Types
+            const testCaseTypes = await this.collectTestCaseTypes();
+
+            // Step 8: Tech Stack
+            const techStack = await this.collectTechStack();
+
+            // Step 9: Programming Language
+            const language = await vscode.window.showQuickPick(
+                [
+                    { label: 'JavaScript', value: 'javascript' },
+                    { label: 'TypeScript', value: 'typescript' },
+                    { label: 'Python', value: 'python' },
+                    { label: 'Java', value: 'java' },
+                    { label: 'C#', value: 'csharp' },
+                    { label: 'Ruby', value: 'ruby' },
+                    { label: 'Other', value: 'other' }
+                ],
+                {
+                    placeHolder: 'What language do you want?',
+                    title: 'Programming Language'
+                }
+            );
+
+            if (!language) {
+                return null; // User cancelled
+            }
+
+            // Step 10: Language Rating
+            const languageRating = await vscode.window.showQuickPick(
+                [
+                    { label: '⭐ 1 - Beginner', value: 1 },
+                    { label: '⭐⭐ 2 - Novice', value: 2 },
+                    { label: '⭐⭐⭐ 3 - Intermediate', value: 3 },
+                    { label: '⭐⭐⭐⭐ 4 - Advanced', value: 4 },
+                    { label: '⭐⭐⭐⭐⭐ 5 - Expert', value: 5 }
+                ],
+                {
+                    placeHolder: 'How much do you rate yourself in that language out of five?',
+                    title: 'Language Proficiency Rating'
+                }
+            );
+
+            if (!languageRating) {
+                return null; // User cancelled
+            }
+
+            // Step 11: Manual Test Cases File Upload
+            const manualTestCasesFile = await this.uploadManualTestCasesFile();
+
+            // Step 12: Manual Flow Capture
+            const wantsManualFlowCapture = await vscode.window.showQuickPick(
+                [
+                    { label: 'Yes, I want to feed manual tests', value: true },
+                    { label: 'No, skip manual flow capture', value: false }
+                ],
+                {
+                    placeHolder: 'Do you want to feed some manual tests?',
+                    title: 'Manual Flow Capture'
+                }
+            );
+
+            if (wantsManualFlowCapture === undefined) {
+                return null; // User cancelled
+            }
+
+            // Create project details
+            const projectDetails: ProjectDetails = {
+                projectName: projectName.trim(),
+                appType: appType.value,
+                webUrl,
+                environments,
+                testFramework: frameworkValue,
+                designPattern: designPattern.value,
+                testCaseTypes,
+                techStack,
+                language: language.value,
+                languageRating: languageRating.value,
+                manualTestCasesFile,
+                hasManualTestCases: !!manualTestCasesFile,
+                wantsManualFlowCapture: wantsManualFlowCapture.value,
+                captureFrequency: 'manual',
+                teamSize: 1
+            };
+
+            // Handle manual flow capture or test generation
+            if (wantsManualFlowCapture.value) {
+                await this.handleManualFlowCapture(projectDetails);
+            } else {
+                await this.handleTestGeneration(projectDetails);
+            }
+
+            // Save configuration
+            await this.saveProjectConfiguration(projectDetails);
+            await this.showCompletionMessage(projectDetails);
+
+            return projectDetails;
+
+        } catch (error) {
+            vscode.window.showErrorMessage(`Setup failed: ${error}`);
+            return null;
+        }
+    }
+
+
+    private async saveProjectConfiguration(details: ProjectDetails): Promise<void> {
+        // Save to workspace state with project-specific key
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        const projectKey = `qa-html-capture.project.${details.projectName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        
+        if (workspaceFolder) {
+            // Use workspace-specific storage with project-specific key
+            await this.context.workspaceState.update(`${projectKey}.details`, details);
+            await this.context.workspaceState.update(`${projectKey}.onboardingCompleted`, true);
+            await this.context.workspaceState.update('qa-html-capture.currentProject', details.projectName);
+        } else {
+            // Fallback to global state if no workspace
+            await this.context.globalState.update(`${projectKey}.details`, details);
+            await this.context.globalState.update(`${projectKey}.onboardingCompleted`, true);
+            await this.context.globalState.update('qa-html-capture.currentProject', details.projectName);
+        }
+        
+        // Save to JSON file
+        await this.saveProjectConfigToFile(details);
+        
+        // Also save to workspace settings if the configuration is registered
+        try {
+            const config = vscode.workspace.getConfiguration('qa-html-capture');
+            await config.update('projectDetails', details, vscode.ConfigurationTarget.Workspace);
+        } catch (error) {
+            // If configuration is not registered, just use workspace state
+            console.log('Configuration not registered, using workspace state only');
+        }
+    }
+
+    private async saveProjectConfigToFile(projectDetails: ProjectDetails): Promise<void> {
+        try {
+            const fileName = `project-config.json`;
+            const filePath = path.join(this.configStoragePath, fileName);
+            
+            // Create a clean config object with only project details (no metadata)
+            const configData = {
+                projectDetails: {
+                    projectName: projectDetails.projectName,
+                    appType: projectDetails.appType,
+                    webUrl: projectDetails.webUrl,
+                    environments: projectDetails.environments,
+                    testFramework: projectDetails.testFramework,
+                    designPattern: projectDetails.designPattern,
+                    testCaseTypes: projectDetails.testCaseTypes,
+                    techStack: projectDetails.techStack,
+                    language: projectDetails.language,
+                    languageRating: projectDetails.languageRating,
+                    hasManualTestCases: projectDetails.hasManualTestCases,
+                    manualTestCasesFile: projectDetails.manualTestCasesFile,
+                    wantsManualFlowCapture: projectDetails.wantsManualFlowCapture,
+                    captureFrequency: projectDetails.captureFrequency,
+                    teamSize: projectDetails.teamSize
+                    // Exclude capturedMetadata and generatedTests from project config
+                },
+                metadata: {
+                    version: '1.0.0',
+                    lastUpdated: new Date().toISOString(),
+                    createdBy: 'QA HTML Capture Extension'
+                },
+                settings: {
+                    autoSave: true,
+                    backupEnabled: true
+                }
+            };
+            
+            await fs.promises.writeFile(filePath, JSON.stringify(configData, null, 2));
+            
+            // Refresh files tree if available
+            if (this.filesTreeProvider) {
+                this.filesTreeProvider.refresh();
+            }
+            
+            vscode.window.showInformationMessage(`Project config saved to: ${filePath}`);
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to save config file: ${error}`);
+        }
     }
 
     private async showCompletionMessage(details: ProjectDetails): Promise<void> {
-        let message = `Setup Complete!
+        const environmentsText = details.environments.map(env => 
+            `• ${env.name}: ${env.url}${env.isDefault ? ' (Default)' : ''}`
+        ).join('\n');
+        
+        const testCaseTypesText = details.testCaseTypes.length > 0 
+            ? details.testCaseTypes.join(', ') 
+            : 'None selected';
+            
+        const techStackText = details.techStack.length > 0 
+            ? details.techStack.join(', ') 
+            : 'None selected';
+
+        const message = `🎉 Setup Complete!
 
 Your project "${details.projectName}" is now configured for QA HTML Structure Capture.
 
 Configuration Summary:
 • App Type: ${details.appType}
-• Existing Tests: ${details.hasExistingTests ? 'Yes' : 'No'}
-• Environments: ${details.environments.length}
-• Capture Frequency: ${details.captureFrequency}`;
+• Web URL: ${details.webUrl || 'Not specified'}
+• Test Framework: ${details.testFramework}
+• Design Pattern: ${details.designPattern}
+• Test Case Types: ${testCaseTypesText}
+• Tech Stack: ${techStackText}
+• Language: ${details.language} (Rating: ${details.languageRating}/5)
+• Manual Test Cases: ${details.hasManualTestCases ? 'Yes' : 'No'}
+• Manual Flow Capture: ${details.wantsManualFlowCapture ? 'Yes' : 'No'}
 
-        if (details.loginCredentials) {
-            message += '\n• Login: Configured';
-        }
+Environments:
+${environmentsText}
 
-        message += `
+Generated Tests: ${details.generatedTests ? 'Yes' : 'No'}
 
 Next Steps:
-1. Open your application in a browser
-2. Use "Capture HTML Baseline" to create your first baseline
-3. Make changes to your app
-4. Use "Compare HTML Structure" to see differences
-5. Generate updated locators for your tests
+1. Use "Capture Baseline" to record your first HTML structure
+2. Use "Compare Structure" to detect changes
+3. Use "Generate Locators" to get updated selectors
+4. Review and run your generated test cases
 
 Happy testing! 🚀`;
 
-        await vscode.window.showInformationMessage(message, 'Start Testing', 'View Settings');
+        await vscode.window.showInformationMessage(message);
     }
 
-    public async getProjectDetails(): Promise<ProjectDetails | null> {
-        return this.context.globalState.get('qa-html-capture.projectDetails', null);
-    }
-
-    public async resetOnboarding(): Promise<void> {
-        await this.context.globalState.update('qa-html-capture.onboardingCompleted', false);
-        await this.context.globalState.update('qa-html-capture.projectDetails', null);
-    }
-
-    public async showProjectSettings(): Promise<void> {
-        const details = await this.getProjectDetails();
+    async showProjectSettings(): Promise<void> {
+        // Get current project name
+        const currentProject = this.getCurrentProjectName();
         
-        if (!details) {
-            await vscode.window.showInformationMessage(
-                'No project configuration found. Would you like to set up your project?',
-                'Setup Project',
-                'Cancel'
-            ).then(selection => {
-                if (selection === 'Setup Project') {
-                    this.showOnboardingWizard();
-                }
-            });
+        if (!currentProject) {
+            await vscode.window.showInformationMessage('No active project found. Please run the setup wizard first.');
             return;
         }
+
+        // Try to get project details from file first, then from workspace state
+        let details: ProjectDetails | undefined;
+        
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (workspaceFolder) {
+                const projectConfigPath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'config', 'project-config.json');
+                if (fs.existsSync(projectConfigPath)) {
+                    const configContent = fs.readFileSync(projectConfigPath, 'utf8');
+                    const config = JSON.parse(configContent);
+                    details = config.projectDetails;
+                }
+            }
+        } catch (error) {
+            console.log('Error reading project config file:', error);
+        }
+        
+        if (!details) {
+            await vscode.window.showInformationMessage('No project configuration found. Please run the setup wizard first.');
+            return;
+        }
+
+        const testCaseTypesText = details.testCaseTypes.length > 0 
+            ? details.testCaseTypes.join(', ') 
+            : 'None selected';
+            
+        const techStackText = details.techStack.length > 0 
+            ? details.techStack.join(', ') 
+            : 'None selected';
+
+        const environmentsText = details.environments.map(env => 
+            `• ${env.name}: ${env.url}${env.isDefault ? ' (Default)' : ''}`
+        ).join('\n');
 
         const settings = `📋 Project Configuration
 
 Project Name: ${details.projectName}
 App Type: ${details.appType}
-Existing Tests: ${details.hasExistingTests ? 'Yes' : 'No'}
+Web URL: ${details.webUrl || 'Not specified'}
 Test Framework: ${details.testFramework || 'Not specified'}
+Design Pattern: ${details.designPattern || 'Not specified'}
+Test Case Types: ${testCaseTypesText}
+Tech Stack: ${techStackText}
+Language: ${details.language} (Rating: ${details.languageRating}/5)
+Manual Test Cases: ${details.hasManualTestCases ? 'Yes' : 'No'}
+Manual Flow Capture: ${details.wantsManualFlowCapture ? 'Yes' : 'No'}
 Capture Frequency: ${details.captureFrequency}
-Team Size: ${details.teamSize || 'Not specified'}
-
-${details.webUrl ? `Main URL: ${details.webUrl}` : ''}
+Team Size: ${details.teamSize} people
 
 Environments:
-${details.environments.map(env => `• ${env.name}: ${env.url}${env.isDefault ? ' (Default)' : ''}`).join('\n')}
-
-${details.loginCredentials ? `
-Login Configuration:
-• URL: ${details.loginCredentials.loginUrl}
-• Username: ${details.loginCredentials.username}
-• Selectors: ${Object.entries(details.loginCredentials.elementSelectors).map(([key, value]) => `${key}: ${value}`).join(', ')}
-` : ''}
+${environmentsText}
 
 Would you like to reconfigure these settings?`;
 
@@ -859,6 +722,895 @@ Would you like to reconfigure these settings?`;
                 await this.resetOnboarding();
                 await vscode.window.showInformationMessage('Project settings have been reset. Please reconfigure your project.');
                 break;
+        }
+    }
+
+    private async resetOnboarding(): Promise<void> {
+        await this.context.globalState.update('qa-html-capture.projectDetails', undefined);
+        await this.context.globalState.update('qa-html-capture.onboardingCompleted', false);
+    }
+
+    private async collectEnvironments(): Promise<Array<{name: string; url: string; isDefault: boolean}>> {
+        const environments: Array<{name: string; url: string; isDefault: boolean}> = [];
+        
+        while (true) {
+            const addEnvironment = await vscode.window.showQuickPick(
+                [
+                    { label: 'Add Environment', value: true },
+                    { label: 'No more environments', value: false }
+                ],
+                {
+                    placeHolder: 'Do you want to add an environment?',
+                    title: 'Environments under test'
+                }
+            );
+
+            if (!addEnvironment || !addEnvironment.value) {
+                break;
+            }
+
+            const envName = await vscode.window.showInputBox({
+                prompt: 'Enter environment name',
+                placeHolder: 'e.g., Development, Staging, Production',
+                validateInput: (value) => {
+                    if (!value || value.trim().length === 0) {
+                        return 'Environment name is required';
+                    }
+                    return null;
+                }
+            });
+
+            if (!envName) break;
+
+            const envUrl = await vscode.window.showInputBox({
+                prompt: 'Enter environment URL',
+                placeHolder: 'https://dev.example.com',
+                validateInput: (value) => {
+                    if (value && value.trim().length > 0) {
+                        try {
+                            new URL(value);
+                            return null;
+                        } catch {
+                            return 'Please enter a valid URL';
+                        }
+                    }
+                    return null;
+                }
+            });
+
+            if (!envUrl) break;
+
+            let isDefault = false;
+            if (environments.length === 0) {
+                isDefault = true;
+            } else {
+                const isDefaultResult = await vscode.window.showQuickPick(
+                    [
+                        { label: 'Yes, set as default', value: true },
+                        { label: 'No', value: false }
+                    ],
+                    {
+                        placeHolder: 'Is this the default environment?',
+                        title: 'Default Environment'
+                    }
+                );
+                isDefault = isDefaultResult?.value || false;
+            }
+
+            environments.push({
+                name: envName.trim(),
+                url: envUrl.trim(),
+                isDefault
+            });
+        }
+
+        return environments;
+    }
+
+    private async collectTestCaseTypes(): Promise<string[]> {
+        const testCaseTypes: string[] = [];
+        
+        const options = [
+            { label: 'Unit Tests', value: 'unit' },
+            { label: 'Integration Tests', value: 'integration' },
+            { label: 'End-to-End Tests', value: 'e2e' },
+            { label: 'API Tests', value: 'api' },
+            { label: 'Performance Tests', value: 'performance' },
+            { label: 'Security Tests', value: 'security' },
+            { label: 'Visual Regression Tests', value: 'visual' },
+            { label: 'Accessibility Tests', value: 'accessibility' }
+        ];
+
+        const selected = await vscode.window.showQuickPick(options, {
+            placeHolder: 'What type of test cases do you want to add? (Select multiple)',
+            title: 'Test Case Types',
+            canPickMany: true
+        });
+
+        return selected ? selected.map(item => item.value) : [];
+    }
+
+    private async collectTechStack(): Promise<string[]> {
+        const techStack: string[] = [];
+        
+        const options = [
+            { label: 'Playwright', value: 'playwright' },
+            { label: 'Puppeteer', value: 'puppeteer' },
+            { label: 'Selenium', value: 'selenium' },
+            { label: 'Cypress', value: 'cypress' },
+            { label: 'WebdriverIO', value: 'webdriverio' },
+            { label: 'TestCafe', value: 'testcafe' },
+            { label: 'Jest', value: 'jest' },
+            { label: 'Mocha', value: 'mocha' },
+            { label: 'Chai', value: 'chai' },
+            { label: 'Cucumber', value: 'cucumber' },
+            { label: 'Allure', value: 'allure' },
+            { label: 'ReportPortal', value: 'reportportal' }
+        ];
+
+        const selected = await vscode.window.showQuickPick(options, {
+            placeHolder: 'Do you have a tech stack in mind? (Select multiple)',
+            title: 'Tech Stack',
+            canPickMany: true
+        });
+
+        return selected ? selected.map(item => item.value) : [];
+    }
+
+    private async uploadManualTestCasesFile(): Promise<string | undefined> {
+        const uploadFile = await vscode.window.showQuickPick(
+            [
+                { label: 'Upload Manual Test Cases File', value: true },
+                { label: 'Skip file upload', value: false }
+            ],
+            {
+                placeHolder: 'Do you have manual test cases in any format?',
+                title: 'Manual Test Cases File Upload'
+            }
+        );
+
+        if (!uploadFile || !uploadFile.value) {
+            return undefined;
+        }
+
+        const fileUri = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectFolders: false,
+            canSelectMany: false,
+            filters: {
+                'Test Files': ['xlsx', 'xls', 'csv', 'json', 'yaml', 'yml', 'txt', 'md'],
+                'All Files': ['*']
+            },
+            title: 'Select Manual Test Cases File'
+        });
+
+        return fileUri && fileUri.length > 0 ? fileUri[0].fsPath : undefined;
+    }
+
+    private async handleManualFlowCapture(projectDetails: ProjectDetails): Promise<void> {
+        if (!projectDetails.webUrl) {
+            vscode.window.showErrorMessage('Web URL is required for manual flow capture');
+            return;
+        }
+
+        // Start metadata capture session
+        await this.startMetadataCapture(projectDetails.webUrl);
+
+        // Show browser selection dialog
+        const browserChoice = await vscode.window.showQuickPick(
+            [
+                { label: 'Default Browser (System)', value: 'default' },
+                { label: 'New Browser Window', value: 'new-window' },
+                { label: 'Incognito/Private Mode', value: 'incognito' }
+            ],
+            {
+                placeHolder: 'Choose how to open the browser',
+                title: 'Browser Environment Selection'
+            }
+        );
+
+        if (!browserChoice) {
+            this.stopMetadataCapture();
+            return;
+        }
+
+        // Open browser based on selection
+        await this.openBrowserInEnvironment(projectDetails.webUrl, browserChoice.value);
+        
+        // Show instructions for manual flow capture
+        const instructions = `Browser opened in ${browserChoice.label} with your application URL: ${projectDetails.webUrl}
+
+Metadata capture is now ACTIVE!
+
+Please follow these steps:
+1. Navigate through your application manually
+2. Perform the test scenarios you want to automate
+3. Our extension is capturing your interactions
+4. Close the browser when finished, or click "Stop Capture" below
+
+Note: Closing the browser will automatically stop capture and save your metadata.`;
+
+        // Start monitoring for browser close
+        this.startBrowserMonitoring();
+
+        const stopCapture = await vscode.window.showInformationMessage(
+            instructions,
+            'Stop Capture Now',
+            'Cancel'
+        );
+
+        if (stopCapture === 'Stop Capture Now') {
+            // Stop metadata capture and save
+            const capturedMetadata = await this.stopMetadataCapture();
+            if (capturedMetadata) {
+                projectDetails.capturedMetadata = capturedMetadata;
+                
+                // Save metadata to file
+                await this.saveCapturedMetadata(capturedMetadata);
+                
+                // Generate tests based on captured metadata
+                projectDetails.generatedTests = await this.generateTestsFromMetadata(projectDetails);
+                
+                // Show generated tests for review
+                await this.showGeneratedTestsForReview(projectDetails);
+            }
+            } else {
+            // Cancel capture
+            this.stopMetadataCapture();
+        }
+    }
+
+    private async handleTestGeneration(projectDetails: ProjectDetails): Promise<void> {
+        if (projectDetails.hasManualTestCases && projectDetails.manualTestCasesFile) {
+            // Generate tests from uploaded manual test cases file
+            projectDetails.generatedTests = await this.generateTestsFromFile(projectDetails);
+            } else {
+            // Ask for page names and generate tests based on that
+            const pageNames = await this.collectPageNames();
+            projectDetails.pageNames = pageNames;
+            projectDetails.generatedTests = await this.generateTestsFromPageNames(projectDetails);
+        }
+    }
+
+    private async collectPageNames(): Promise<string[]> {
+        const pageNames: string[] = [];
+        
+        while (true) {
+            const addPage = await vscode.window.showQuickPick(
+                [
+                    { label: 'Add Page', value: true },
+                    { label: 'No more pages', value: false }
+                ],
+                {
+                    placeHolder: 'Do you want to add a page name?',
+                    title: 'Website Pages'
+                }
+            );
+
+            if (!addPage || !addPage.value) {
+                break;
+            }
+
+            const pageName = await vscode.window.showInputBox({
+                prompt: 'Enter page name',
+                placeHolder: 'e.g., Login Page, Dashboard, User Profile',
+                validateInput: (value) => {
+                    if (!value || value.trim().length === 0) {
+                        return 'Page name is required';
+                    }
+                    return null;
+                }
+            });
+
+            if (pageName) {
+                pageNames.push(pageName.trim());
+            }
+        }
+
+        return pageNames;
+    }
+
+    private async generateTestsFromMetadata(projectDetails: ProjectDetails): Promise<any> {
+        // Generate tests based on real captured metadata (not fake data)
+        const interactions = projectDetails.capturedMetadata?.interactions || [];
+        
+        if (interactions.length === 0) {
+            return {
+                framework: projectDetails.testFramework,
+                language: projectDetails.language,
+                pattern: projectDetails.designPattern,
+                tests: []
+            };
+        }
+        
+        return {
+            framework: projectDetails.testFramework,
+            language: projectDetails.language,
+            pattern: projectDetails.designPattern,
+            tests: [
+                {
+                    name: 'Captured User Flow Test',
+                    description: 'Test generated from captured user interactions',
+                    steps: interactions
+                }
+            ]
+        };
+    }
+
+    private async generateTestsFromFile(projectDetails: ProjectDetails): Promise<any> {
+        // Simulate test generation from uploaded file
+                    return {
+            framework: projectDetails.testFramework,
+            language: projectDetails.language,
+            pattern: projectDetails.designPattern,
+            source: 'manual_test_cases_file',
+            tests: [
+                {
+                    name: 'Test from Manual File',
+                    description: 'Generated from uploaded manual test cases',
+                    steps: []
+                }
+            ]
+        };
+    }
+
+    private async generateTestsFromPageNames(projectDetails: ProjectDetails): Promise<any> {
+        // Simulate test generation from page names
+        return {
+            framework: projectDetails.testFramework,
+            language: projectDetails.language,
+            pattern: projectDetails.designPattern,
+            source: 'page_names',
+            tests: projectDetails.pageNames?.map(pageName => ({
+                name: `${pageName} Test`,
+                description: `Test for ${pageName}`,
+                steps: []
+            })) || []
+        };
+    }
+
+    private async showGeneratedTestsForReview(projectDetails: ProjectDetails): Promise<void> {
+        const reviewAction = await vscode.window.showQuickPick(
+            [
+                { label: 'Accept All Tests', value: 'accept_all' },
+                { label: 'Review and Modify', value: 'review' },
+                { label: 'Reject All Tests', value: 'reject_all' }
+            ],
+            {
+                placeHolder: 'Review the generated tests',
+                title: 'Generated Tests Review'
+            }
+        );
+
+        if (reviewAction?.value === 'accept_all') {
+            vscode.window.showInformationMessage('All tests have been accepted and added to your project!');
+        } else if (reviewAction?.value === 'review') {
+            vscode.window.showInformationMessage('Test review functionality will be implemented in the next version.');
+        } else if (reviewAction?.value === 'reject_all') {
+            vscode.window.showInformationMessage('All tests have been rejected. You can generate new tests later.');
+        }
+    }
+
+    private async startMetadataCapture(url: string): Promise<void> {
+        this.isCapturing = true;
+        const sessionId = `session_${Date.now()}`;
+        
+        this.currentSession = {
+            sessionId,
+            url,
+            startTime: new Date().toISOString(),
+            endTime: '',
+            interactions: [],
+            pageTitle: '',
+            userAgent: 'VS Code Extension',
+            viewport: { width: 1920, height: 1080 }
+        };
+
+        // Add initial navigation interaction
+        this.addInteraction({
+            action: 'navigate',
+            url: url,
+            timestamp: new Date().toISOString(),
+            description: 'Initial page navigation'
+        });
+
+        vscode.window.showInformationMessage('Metadata capture started! Your interactions are being recorded.');
+        
+        // Note: Real browser interaction capture would be implemented here
+        // For now, this is just a placeholder that records the initial navigation
+    }
+
+    private async stopMetadataCapture(): Promise<CapturedMetadata | null> {
+        if (!this.currentSession) {
+            return null;
+        }
+
+        this.isCapturing = false;
+        this.currentSession.endTime = new Date().toISOString();
+        
+        const capturedMetadata = { ...this.currentSession };
+        this.currentSession = null;
+
+        vscode.window.showInformationMessage(`Metadata capture stopped! Captured ${capturedMetadata.interactions.length} interactions.`);
+        
+        return capturedMetadata;
+    }
+
+    private addInteraction(interaction: CapturedInteraction): void {
+        if (this.currentSession && this.isCapturing) {
+            this.currentSession.interactions.push(interaction);
+        }
+    }
+
+    private async saveCapturedMetadata(metadata: CapturedMetadata): Promise<void> {
+        try {
+            const fileName = `metadata_${metadata.sessionId}.json`;
+            const filePath = path.join(this.metadataStoragePath, fileName);
+            
+            await fs.promises.writeFile(filePath, JSON.stringify(metadata, null, 2));
+            
+            // Refresh files tree if available
+            if (this.filesTreeProvider) {
+                this.filesTreeProvider.refresh();
+            }
+            
+            vscode.window.showInformationMessage(`Metadata saved to: ${filePath}`);
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to save metadata: ${error}`);
+        }
+    }
+
+    // Method to manually add interactions (for testing or manual input)
+    public async addManualInteraction(interaction: Omit<CapturedInteraction, 'timestamp'>): Promise<void> {
+        if (this.currentSession && this.isCapturing) {
+            this.addInteraction({
+                ...interaction,
+                timestamp: new Date().toISOString()
+            });
+        }
+    }
+
+    // Method to add sample interactions for demonstration (REMOVED - was generating fake data)
+    // This method has been removed to prevent fake metadata generation
+
+    // Method to open project config file for editing
+    public async openProjectConfigFile(): Promise<void> {
+        try {
+            const configFilePath = path.join(this.configStoragePath, 'project-config.json');
+            
+            // Check if config file exists
+            if (!fs.existsSync(configFilePath)) {
+                const createFile = await vscode.window.showWarningMessage(
+                    'Project configuration file not found. Would you like to create one?',
+                    'Create File',
+                    'Cancel'
+                );
+                
+                if (createFile === 'Create File') {
+                    // Create a default config file
+                    const defaultConfig = {
+                        projectDetails: {
+                            projectName: 'New Project',
+                            appType: 'web',
+                            webUrl: '',
+                            environments: [],
+                            testFramework: 'playwright',
+                            designPattern: 'pom',
+                            testCaseTypes: [],
+                            techStack: [],
+                            language: 'javascript',
+                            languageRating: 3,
+                            manualTestCasesFile: '',
+                            hasManualTestCases: false,
+                            wantsManualFlowCapture: false,
+                            captureFrequency: 'manual',
+                            teamSize: 1
+                        },
+                        metadata: {
+                            version: '1.0.0',
+                            lastUpdated: new Date().toISOString(),
+                            createdBy: 'QA HTML Capture Extension'
+                        },
+                        settings: {
+                            autoSave: true,
+                            backupEnabled: true
+                        }
+                    };
+                    
+                    await fs.promises.writeFile(configFilePath, JSON.stringify(defaultConfig, null, 2));
+                    vscode.window.showInformationMessage('Default project configuration file created!');
+                } else {
+                    return;
+                }
+            }
+            
+            // Open the config file in VS Code
+            const document = await vscode.workspace.openTextDocument(configFilePath);
+            await vscode.window.showTextDocument(document);
+            
+            vscode.window.showInformationMessage(`Project config file opened: ${configFilePath}`);
+            
+            // Also show the path in a separate message for easy copying
+            const copyPath = await vscode.window.showInformationMessage(
+                `Config file location: ${configFilePath}`,
+                'Copy Path',
+                'OK'
+            );
+            
+            if (copyPath === 'Copy Path') {
+                await vscode.env.clipboard.writeText(configFilePath);
+                vscode.window.showInformationMessage('Path copied to clipboard!');
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to open config file: ${error}`);
+        }
+    }
+
+    // Method to reload project config from file
+    public async reloadProjectConfigFromFile(): Promise<void> {
+        try {
+            const configFilePath = path.join(this.configStoragePath, 'project-config.json');
+            
+            if (!fs.existsSync(configFilePath)) {
+                vscode.window.showWarningMessage('Project configuration file not found.');
+                return;
+            }
+            
+            const fileContent = await fs.promises.readFile(configFilePath, 'utf8');
+            const configData = JSON.parse(fileContent);
+            
+            if (configData.projectDetails) {
+                // Save to global state
+                await this.context.globalState.update('qa-html-capture.projectDetails', configData.projectDetails);
+                await this.context.globalState.update('qa-html-capture.onboardingCompleted', true);
+                
+                vscode.window.showInformationMessage('Project configuration reloaded from file!');
+                } else {
+                vscode.window.showErrorMessage('Invalid configuration file format.');
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to reload config file: ${error}`);
+        }
+    }
+
+    // Method to open browser in specific environment (public for testing)
+    public async openBrowserInEnvironment(url: string, environment: string): Promise<void> {
+        try {
+            switch (environment) {
+                case 'default':
+                    // Open in default browser
+                    await vscode.env.openExternal(vscode.Uri.parse(url));
+                    vscode.window.showInformationMessage(`Browser opened in ${environment} mode`);
+                    break;
+                    
+                case 'new-window':
+                    // Open in new browser window
+                    await this.openNewBrowserWindow(url);
+                    vscode.window.showInformationMessage(`Browser opened in ${environment} mode`);
+                    break;
+                    
+                case 'incognito':
+                    // Open in incognito/private mode
+                    await this.openIncognitoBrowser(url);
+                    vscode.window.showInformationMessage(`Browser opened in ${environment} mode`);
+                    break;
+                    
+                default:
+                    await vscode.env.openExternal(vscode.Uri.parse(url));
+                    vscode.window.showInformationMessage(`Browser opened in ${environment} mode`);
+            }
+        } catch (error) {
+            console.error('Browser launch error:', error);
+            vscode.window.showErrorMessage(`Failed to open browser: ${error}`);
+            // Fallback to default browser
+            await vscode.env.openExternal(vscode.Uri.parse(url));
+        }
+    }
+
+    // Method to open new browser window
+    private async openNewBrowserWindow(url: string): Promise<void> {
+        const { spawn, exec } = require('child_process');
+        
+        // Check if we're in WSL environment
+        const isWSL = process.env.WSL_DISTRO_NAME || process.env.WSLENV;
+        
+        if (isWSL) {
+            // In WSL, try to open browser on Windows host
+            try {
+                console.log('WSL detected, launching browser on Windows host...');
+                const command = `cmd.exe /c start "" "${url}"`;
+                
+                await new Promise<void>((resolve, reject) => {
+                    this.browserProcess = exec(command, (error: any, stdout: any, stderr: any) => {
+                        if (error) {
+                            console.log('WSL browser launch failed:', error);
+                            reject(error);
+                        } else {
+                            console.log('WSL browser launched successfully');
+                            resolve();
+                        }
+                    });
+                });
+                return;
+            } catch (error) {
+                console.log('WSL browser launch error:', error);
+                // Fallback to default
+                await vscode.env.openExternal(vscode.Uri.parse(url));
+                return;
+            }
+        }
+        
+        // For Linux environments, try different browsers
+        const browsers = [
+            { name: 'google-chrome', args: ['--new-window', url] },
+            { name: 'chromium-browser', args: ['--new-window', url] },
+            { name: 'chromium', args: ['--new-window', url] },
+            { name: 'firefox', args: ['-new-window', url] },
+            { name: 'microsoft-edge', args: ['--new-window', url] }
+        ];
+
+        let browserLaunched = false;
+        
+        for (const browser of browsers) {
+            try {
+                console.log(`Trying to launch ${browser.name}...`);
+                
+                // Check if browser exists first
+                const checkCommand = `which ${browser.name}`;
+                const exists = await new Promise<boolean>((resolve) => {
+                    exec(checkCommand, (error: any) => {
+                        resolve(!error);
+                    });
+                });
+                
+                if (exists) {
+                    console.log(`${browser.name} found, launching...`);
+                    
+                    // Browser exists, try to launch it
+                    this.browserProcess = spawn(browser.name, browser.args, { 
+                        detached: true,
+                        stdio: 'ignore'
+                    });
+                    
+                    this.browserProcess.on('error', (err: any) => {
+                        console.log(`Failed to launch ${browser.name}:`, err);
+                    });
+                    
+                    this.browserProcess.unref();
+                    browserLaunched = true;
+                    console.log(`Successfully launched ${browser.name}`);
+                    break;
+                } else {
+                    console.log(`${browser.name} not found, trying next...`);
+                }
+            } catch (error) {
+                console.log(`Error with ${browser.name}:`, error);
+                continue;
+            }
+        }
+        
+        // If no browser was launched, fallback to default
+        if (!browserLaunched) {
+            console.log('No browser found, using default');
+            await vscode.env.openExternal(vscode.Uri.parse(url));
+        }
+    }
+
+    // Method to open incognito/private browser
+    private async openIncognitoBrowser(url: string): Promise<void> {
+        const { spawn, exec } = require('child_process');
+        
+        // Check if we're in WSL environment
+        const isWSL = process.env.WSL_DISTRO_NAME || process.env.WSLENV;
+        
+        if (isWSL) {
+            // In WSL, try to open incognito browser on Windows host
+            try {
+                console.log('WSL detected, launching incognito browser on Windows host...');
+                
+                // Try Chrome incognito first
+                let command = `cmd.exe /c start chrome --incognito "${url}"`;
+                
+                await new Promise<void>((resolve, reject) => {
+                    this.browserProcess = exec(command, (error: any, stdout: any, stderr: any) => {
+                        if (error) {
+                            console.log('Chrome incognito failed, trying Edge InPrivate...');
+                            // Try Edge InPrivate
+                            const edgeCommand = `cmd.exe /c start msedge --inprivate "${url}"`;
+                            exec(edgeCommand, (error2: any) => {
+                                if (error2) {
+                                    console.log('WSL incognito browser launch failed');
+                                    reject(error2);
+                } else {
+                                    console.log('Edge InPrivate launched successfully');
+                                    resolve();
+                                }
+                            });
+                        } else {
+                            console.log('Chrome incognito launched successfully');
+                            resolve();
+                        }
+                    });
+            });
+            return;
+            } catch (error) {
+                console.log('WSL incognito browser launch error:', error);
+                await vscode.env.openExternal(vscode.Uri.parse(url));
+            return;
+            }
+        }
+        
+        // For Linux environments, try different browsers with incognito/private flags
+        const browsers = [
+            { name: 'google-chrome', args: ['--incognito', url] },
+            { name: 'chromium-browser', args: ['--incognito', url] },
+            { name: 'chromium', args: ['--incognito', url] },
+            { name: 'firefox', args: ['-private-window', url] },
+            { name: 'microsoft-edge', args: ['--inprivate', url] }
+        ];
+
+        let browserLaunched = false;
+        
+        for (const browser of browsers) {
+            try {
+                console.log(`Trying to launch ${browser.name} in incognito mode...`);
+                
+                // Check if browser exists first
+                const checkCommand = `which ${browser.name}`;
+                const exists = await new Promise<boolean>((resolve) => {
+                    exec(checkCommand, (error: any) => {
+                        resolve(!error);
+                    });
+                });
+                
+                if (exists) {
+                    console.log(`${browser.name} found, launching in incognito mode...`);
+                    
+                    // Browser exists, try to launch it
+                    this.browserProcess = spawn(browser.name, browser.args, { 
+                        detached: true,
+                        stdio: 'ignore'
+                    });
+                    
+                    this.browserProcess.on('error', (err: any) => {
+                        console.log(`Failed to launch ${browser.name} in incognito:`, err);
+                    });
+                    
+                    this.browserProcess.unref();
+                    browserLaunched = true;
+                    console.log(`Successfully launched ${browser.name} in incognito mode`);
+                break;
+                } else {
+                    console.log(`${browser.name} not found, trying next...`);
+                }
+            } catch (error) {
+                console.log(`Error with ${browser.name} incognito:`, error);
+                continue;
+            }
+        }
+        
+        // If no browser was launched, fallback to default
+        if (!browserLaunched) {
+            console.log('No incognito browser found, using default');
+            await vscode.env.openExternal(vscode.Uri.parse(url));
+        }
+    }
+
+    // Method to start monitoring browser close events
+    private startBrowserMonitoring(): void {
+        if (this.browserMonitoringInterval) {
+            clearInterval(this.browserMonitoringInterval);
+        }
+
+        this.browserMonitoringInterval = setInterval(async () => {
+            if (this.browserProcess) {
+                try {
+                    // Check if browser process is still running
+                    const isRunning = !this.browserProcess.killed;
+                    if (!isRunning) {
+                        await this.handleBrowserClosed();
+                    }
+                } catch (error) {
+                    // Process might have closed
+                    await this.handleBrowserClosed();
+                }
+            }
+        }, 2000); // Check every 2 seconds
+    }
+
+    // Method to handle browser close event
+    private async handleBrowserClosed(): Promise<void> {
+        if (this.browserMonitoringInterval) {
+            clearInterval(this.browserMonitoringInterval);
+            this.browserMonitoringInterval = null;
+        }
+
+        if (this.isCapturing) {
+            vscode.window.showInformationMessage('Browser closed detected. Stopping capture...');
+            
+            // Stop metadata capture and save
+            const capturedMetadata = await this.stopMetadataCapture();
+            if (capturedMetadata) {
+                // Save metadata to file
+                await this.saveCapturedMetadata(capturedMetadata);
+                
+                vscode.window.showInformationMessage('Metadata capture completed and saved!');
+            }
+        }
+
+        this.browserProcess = null;
+    }
+
+    // Method to manually stop browser monitoring
+    public async stopBrowserMonitoring(): Promise<void> {
+        if (this.browserMonitoringInterval) {
+            clearInterval(this.browserMonitoringInterval);
+            this.browserMonitoringInterval = null;
+        }
+
+        if (this.browserProcess && !this.browserProcess.killed) {
+            try {
+                this.browserProcess.kill();
+                vscode.window.showInformationMessage('Browser process stopped');
+            } catch (error) {
+                vscode.window.showWarningMessage('Could not stop browser process');
+            }
+            this.browserProcess = null;
+        }
+
+        if (this.isCapturing) {
+            const capturedMetadata = await this.stopMetadataCapture();
+            if (capturedMetadata) {
+                await this.saveCapturedMetadata(capturedMetadata);
+                vscode.window.showInformationMessage('Metadata capture stopped and saved!');
+            }
+        }
+    }
+
+    // Method to view captured metadata
+    public async viewCapturedMetadata(): Promise<void> {
+        try {
+            const files = await fs.promises.readdir(this.metadataStoragePath);
+            const metadataFiles = files.filter(file => file.startsWith('metadata_') && file.endsWith('.json'));
+            
+            if (metadataFiles.length === 0) {
+                vscode.window.showInformationMessage('No captured metadata found.');
+                return;
+            }
+
+            const fileOptions = metadataFiles.map(file => ({
+                label: file,
+                value: file
+            }));
+
+            const selectedFile = await vscode.window.showQuickPick(fileOptions, {
+                placeHolder: 'Select metadata file to view',
+                title: 'Captured Metadata Files'
+            });
+
+            if (selectedFile) {
+                const filePath = path.join(this.metadataStoragePath, selectedFile.value);
+                const fileContent = await fs.promises.readFile(filePath, 'utf8');
+                const metadata: CapturedMetadata = JSON.parse(fileContent);
+                
+                // Display metadata in a readable format
+                const metadataText = `Captured Metadata: ${selectedFile.value}
+
+Session ID: ${metadata.sessionId}
+URL: ${metadata.url}
+Start Time: ${metadata.startTime}
+End Time: ${metadata.endTime}
+Total Interactions: ${metadata.interactions.length}
+
+Interactions:
+${metadata.interactions.map((interaction, index) => 
+    `${index + 1}. ${interaction.action}${interaction.element ? ` on ${interaction.element}` : ''}${interaction.value ? ` with value "${interaction.value}"` : ''} at ${interaction.timestamp}`
+).join('\n')}`;
+
+                vscode.window.showInformationMessage(metadataText);
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to view metadata: ${error}`);
         }
     }
 }

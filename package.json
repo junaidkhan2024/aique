@@ -58,11 +58,6 @@
         "category": "QA HTML Capture"
       },
       {
-        "command": "qa-html-capture.deleteBaseline",
-        "title": "Delete Baseline",
-        "category": "QA HTML Capture"
-      },
-      {
         "command": "qa-html-capture.refresh",
         "title": "Refresh",
         "category": "QA HTML Capture"
@@ -78,13 +73,88 @@
         "category": "QA HTML Capture"
       },
       {
-        "command": "qa-html-capture.openBaselineFile",
-        "title": "Open Baseline File",
+        "command": "qa-html-capture.viewCapturedMetadata",
+        "title": "View Captured Metadata",
         "category": "QA HTML Capture"
       },
       {
-        "command": "qa-html-capture.refreshPanel",
-        "title": "Refresh Panel",
+        "command": "qa-html-capture.openProjectConfigFile",
+        "title": "Open Project Config File",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.reloadProjectConfigFromFile",
+        "title": "Reload Project Config From File",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.openFile",
+        "title": "Open File",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.refreshFiles",
+        "title": "Refresh Files",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.openFolder",
+        "title": "Open Folder",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.stopBrowserMonitoring",
+        "title": "Stop Browser Monitoring",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.testBrowserLaunch",
+        "title": "Test Browser Launch",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.addTestInteraction",
+        "title": "Add Test Interaction",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.testNewBrowserWindow",
+        "title": "Test New Browser Window",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.testIncognitoBrowser",
+        "title": "Test Incognito Browser",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.clearWorkspaceStorage",
+        "title": "Clear Workspace Storage",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.switchProject",
+        "title": "Switch Project",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.showCurrentProject",
+        "title": "Show Current Project",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.showUploadedFile",
+        "title": "Show Uploaded Test Cases File",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.listProjects",
+        "title": "List All Projects",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.openBaselineFile",
+        "title": "Open Baseline File",
         "category": "QA HTML Capture"
       },
       {
@@ -98,8 +168,8 @@
         "category": "QA HTML Capture"
       },
       {
-        "command": "qa-html-capture.deleteBaseline",
-        "title": "Delete Baseline",
+        "command": "qa-html-capture.refreshPanel",
+        "title": "Refresh Panel",
         "category": "QA HTML Capture"
       },
       {
@@ -123,18 +193,8 @@
         "category": "QA HTML Capture"
       },
       {
-        "command": "qa-html-capture.refreshPanel",
-        "title": "Refresh Panel",
-        "category": "QA HTML Capture"
-      },
-      {
         "command": "qa-html-capture.showBaselinesFolder",
         "title": "Show Baselines Folder",
-        "category": "QA HTML Capture"
-      },
-      {
-        "command": "qa-html-capture.clearAllBaselines",
-        "title": "Clear All Baselines",
         "category": "QA HTML Capture"
       }
     ],
@@ -158,13 +218,7 @@
           "group": "navigation"
         }
       ],
-      "view/item/context": [
-        {
-          "command": "qa-html-capture.deleteBaseline",
-          "when": "view == qa-html-capture-panel && viewItem == baseline",
-          "group": "inline"
-        }
-      ]
+      "view/item/context": []
     },
     "views": {
       "qa-html-capture": [
@@ -177,13 +231,18 @@
           "id": "qa-html-capture-baselines",
           "name": "Baselines",
           "when": "true"
+        },
+        {
+          "id": "qa-html-capture-files",
+          "name": "Project Files",
+          "when": "true"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "qa-html-capture-baselines",
-        "contents": "Welcome to QA HTML Capture!\n\n[📷 Capture Baseline](command:qa-html-capture.captureBaseline)\n[🔄 Compare Structure](command:qa-html-capture.compareStructure)\n[⚙️ Generate Locators](command:qa-html-capture.generateLocators)\n[🌐 Web Capture](command:qa-html-capture.captureFromWeb)\n\nGet started by capturing your first baseline!",
+        "contents": "Welcome to QA HTML Capture!\n\n[Capture Baseline](command:qa-html-capture.captureBaseline)\n[Compare Structure](command:qa-html-capture.compareStructure)\n[Generate Locators](command:qa-html-capture.generateLocators)\n[Web Capture](command:qa-html-capture.captureFromWeb)\n\nGet started by capturing your first baseline!",
         "when": "true"
       }
     ],
@@ -195,6 +254,16 @@
           "icon": "$(diff)"
         }
       ]
+    },
+    "configuration": {
+      "title": "QA HTML Capture",
+      "properties": {
+        "qa-html-capture.projectDetails": {
+          "type": "object",
+          "description": "Project configuration details for QA HTML Capture",
+          "default": null
+        }
+      }
     }
   },
   "scripts": {

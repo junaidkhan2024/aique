@@ -1,0 +1,28 @@
+{
+    "qa-html-capture.projectDetails": {
+        "projectName": "My QA Project",
+        "appType": "web",
+        "webUrl": "https://qaas.digital",
+        "environments": [
+            {
+                "name": "dev",
+                "url": "https://qaas.digital",
+                "isDefault": true
+            }
+        ],
+        "testFramework": "playwright",
+        "designPattern": "pom",
+        "testCaseTypes": [
+            "unit"
+        ],
+        "techStack": [
+            "playwright"
+        ],
+        "language": "python",
+        "languageRating": 2,
+        "hasManualTestCases": false,
+        "wantsManualFlowCapture": true,
+        "captureFrequency": "manual",
+        "teamSize": 1
+    }
+}

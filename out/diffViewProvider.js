@@ -382,6 +382,33 @@ class DiffViewProvider {
             padding: 2px 4px;
             border-radius: 3px;
         }
+
+        /* Navigation focus and placeholders */
+        .change-group.focused {
+            outline: 2px solid #ffcc00;
+            outline-offset: 2px;
+        }
+        .placeholder-line {
+            background: rgba(255,255,255,0.03);
+            border-left: 4px dashed var(--vscode-panel-border);
+            min-height: 1.2em;
+        }
+
+        .toolbar {
+            position: fixed;
+            top: 12px;
+            right: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .pill {
+            padding: 4px 8px;
+            border-radius: 10px;
+            background: var(--vscode-textBlockQuote-background);
+            border: 1px solid var(--vscode-panel-border);
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -415,6 +442,13 @@ class DiffViewProvider {
         </div>
     </div>
     
+    <div class="toolbar">
+        <span class="pill">Baseline: ${summary.totalElements} elems</span>
+        <span class="pill" id="change-counter">0 / 0</span>
+        <button class="control-btn" onclick="prevChange()">⟨ Prev</button>
+        <button class="control-btn" onclick="nextChange()">Next ⟩</button>
+    </div>
+
     <div class="controls">
         <button class="control-btn" onclick="toggleSynchronizedScroll()">
             <span id="sync-text">🔗 Sync Scroll</span>
@@ -492,6 +526,66 @@ class DiffViewProvider {
         
         // Send message to VS Code
         const vscode = acquireVsCodeApi();
+
+        // --- Change navigation ---
+        let currentChangeIdx = -1;
+        const changeCounter = document.getElementById('change-counter');
+
+        function uniqueIndices(container) {
+            const set = new Set();
+            container.querySelectorAll('[data-change-idx]')
+                .forEach(el => set.add(Number(el.getAttribute('data-change-idx'))));
+            return Array.from(set).sort((a,b) => a-b);
+        }
+
+        const indices = uniqueIndices(baselineViewer);
+
+        function setCounter(pos) {
+            if (!indices.length) {
+                changeCounter.textContent = '0 / 0';
+            } else {
+                changeCounter.textContent = (indices.indexOf(pos)+1) + ' / ' + indices.length;
+            }
+        }
+
+        function clearFocus() {
+            baselineViewer.querySelectorAll('.change-group.focused').forEach(el => el.classList.remove('focused'));
+            currentViewer.querySelectorAll('.change-group.focused').forEach(el => el.classList.remove('focused'));
+        }
+
+        function focusChange(idx) {
+            clearFocus();
+            const selector = '[data-change-idx="' + idx + '"]';
+            const b = baselineViewer.querySelector(selector);
+            const c = currentViewer.querySelector(selector);
+            if (b) { b.classList.add('focused'); b.scrollIntoView({behavior:'smooth', block:'center'}); }
+            if (c) { c.classList.add('focused'); c.scrollIntoView({behavior:'smooth', block:'center'}); }
+            setCounter(idx);
+        }
+
+        function nextChange() {
+            if (!indices.length) return;
+            const pos = indices.indexOf(currentChangeIdx);
+            const nextPos = pos === -1 ? 0 : (pos + 1) % indices.length;
+            currentChangeIdx = indices[nextPos];
+            focusChange(currentChangeIdx);
+        }
+
+        function prevChange() {
+            if (!indices.length) return;
+            const pos = indices.indexOf(currentChangeIdx);
+            const prevPos = pos === -1 ? indices.length - 1 : (pos - 1 + indices.length) % indices.length;
+            currentChangeIdx = indices[prevPos];
+            focusChange(currentChangeIdx);
+        }
+
+        // Initialize to first change
+        if (indices.length) {
+            currentChangeIdx = indices[0];
+            focusChange(currentChangeIdx);
+        } else {
+            setCounter(-1);
+        }
     </script>
 </body>
 </html>`;
@@ -505,6 +599,7 @@ class DiffViewProvider {
         let currentHighlighted = '';
         let baselineLineNumber = 1;
         let currentLineNumber = 1;
+        let changeIndex = 0;
         for (const change of diff) {
             switch (change.type) {
                 case 'equal':
@@ -530,16 +625,17 @@ class DiffViewProvider {
                     if (change.lines) {
                         for (let i = 0; i < change.count; i++) {
                             const line = change.lines[i];
-                            baselineHighlighted += `<div class="line removed-line">
+                            baselineHighlighted += `<div class="line removed-line change-group" data-change-idx="${changeIndex}">
                                 <span class="line-number">${baselineLineNumber}</span>
                                 <span class="line-content"><span class="diff-highlight diff-removed">${this.escapeHtml(line)}</span></span>
                             </div>`;
-                            currentHighlighted += `<div class="line">
+                            currentHighlighted += `<div class="line placeholder-line change-group" data-change-idx="${changeIndex}">
                                 <span class="line-number"></span>
-                                <span class="line-content"></span>
+                                <span class="line-content"><br/></span>
                             </div>`;
                             baselineLineNumber++;
                         }
+                        changeIndex++;
                     }
                     break;
                 case 'insert':
@@ -547,16 +643,17 @@ class DiffViewProvider {
                     if (change.lines) {
                         for (let i = 0; i < change.count; i++) {
                             const line = change.lines[i];
-                            baselineHighlighted += `<div class="line">
+                            baselineHighlighted += `<div class="line placeholder-line change-group" data-change-idx="${changeIndex}">
                                 <span class="line-number"></span>
-                                <span class="line-content"></span>
+                                <span class="line-content"><br/></span>
                             </div>`;
-                            currentHighlighted += `<div class="line added-line">
+                            currentHighlighted += `<div class="line added-line change-group" data-change-idx="${changeIndex}">
                                 <span class="line-number">${currentLineNumber}</span>
                                 <span class="line-content"><span class="diff-highlight diff-added">${this.escapeHtml(line)}</span></span>
                             </div>`;
                             currentLineNumber++;
                         }
+                        changeIndex++;
                     }
                     break;
                 case 'replace':
@@ -567,16 +664,17 @@ class DiffViewProvider {
                             const currentLine = change.currentLines[i];
                             const baselineHighlightedContent = this.highlightInlineChanges(baselineLine, currentLine, 'removed');
                             const currentHighlightedContent = this.highlightInlineChanges(baselineLine, currentLine, 'added');
-                            baselineHighlighted += `<div class="line modified-line">
+                            baselineHighlighted += `<div class="line modified-line change-group" data-change-idx="${changeIndex}">
                                 <span class="line-number">${baselineLineNumber}</span>
                                 <span class="line-content">${baselineHighlightedContent}</span>
                             </div>`;
-                            currentHighlighted += `<div class="line modified-line">
+                            currentHighlighted += `<div class="line modified-line change-group" data-change-idx="${changeIndex}">
                                 <span class="line-number">${currentLineNumber}</span>
                                 <span class="line-content">${currentHighlightedContent}</span>
                             </div>`;
                             baselineLineNumber++;
                             currentLineNumber++;
+                            changeIndex++;
                         }
                     }
                     break;

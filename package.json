@@ -88,6 +88,16 @@
         "category": "QA HTML Capture"
       },
       {
+        "command": "qa-html-capture.deleteProject",
+        "title": "Delete Project",
+        "category": "QA HTML Capture"
+      },
+      {
+        "command": "qa-html-capture.clearWorkspaceStorage",
+        "title": "Clear All Data",
+        "category": "QA HTML Capture"
+      },
+      {
         "command": "qa-html-capture.openFile",
         "title": "Open File",
         "category": "QA HTML Capture"

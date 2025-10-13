@@ -30,6 +30,8 @@ export class TreeViewProvider implements vscode.TreeDataProvider<TreeItem> {
                     new TreeItem('Iterate Diff Results', vscode.TreeItemCollapsibleState.None, 'action', { command: 'qa-html-capture.iterateDiffResults', title: 'Iterate Diff Results' }),
                     new TreeItem('Setup Project', vscode.TreeItemCollapsibleState.None, 'action', { command: 'qa-html-capture.reconfigureProject', title: 'Setup Project' }),
                     new TreeItem('Edit Setup', vscode.TreeItemCollapsibleState.None, 'action', { command: 'qa-html-capture.viewProjectSettings', title: 'Edit Setup' }),
+                    new TreeItem('Delete Project', vscode.TreeItemCollapsibleState.None, 'action', { command: 'qa-html-capture.deleteProject', title: 'Delete Project' }),
+                    new TreeItem('Clear All Data', vscode.TreeItemCollapsibleState.None, 'action', { command: 'qa-html-capture.clearWorkspaceStorage', title: 'Clear All Data' }),
                     new TreeItem('Refresh Panel', vscode.TreeItemCollapsibleState.None, 'action', { command: 'qa-html-capture.refreshPanel', title: 'Refresh Panel' })
                 ]);
 

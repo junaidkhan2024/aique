@@ -194,6 +194,22 @@ function activate(context) {
         vscode.commands.registerCommand('qa-html-capture.reloadProjectConfigFromFile', () => {
             onboardingWizard.reloadProjectConfigFromFile();
         }),
+        vscode.commands.registerCommand('qa-html-capture.deleteProject', async () => {
+            await onboardingWizard.deleteProject();
+        }),
+        vscode.commands.registerCommand('qa-html-capture.clearWorkspaceStorage', () => {
+            onboardingWizard.clearWorkspaceStorage();
+        }),
+        vscode.commands.registerCommand('qa-html-capture.debugInfo', () => {
+            const currentProject = onboardingWizard.getCurrentProjectName();
+            const message = `Debug Information:
+Current Project: ${currentProject || 'None'}
+Extension Version: 1.0.0
+VS Code Version: ${vscode.version}
+Modern UI: Enabled
+Timestamp: ${new Date().toISOString()}`;
+            vscode.window.showInformationMessage(message);
+        }),
         vscode.commands.registerCommand('qa-html-capture.openFile', async (fileItem) => {
             try {
                 const document = await vscode.workspace.openTextDocument(fileItem.filePath);

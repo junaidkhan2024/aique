@@ -127,67 +127,150 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--vscode-editor-background);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: var(--vscode-editor-foreground);
             height: 100vh;
             overflow: hidden;
+            transition: all 0.3s ease;
         }
         
         .header {
-            background: var(--vscode-editor-background);
-            border-bottom: 1px solid var(--vscode-panel-border);
-            padding: 12px 20px;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 16px 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            position: relative;
+            z-index: 100;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #667eea, #764ba2, #f093fb);
+            background-size: 200% 200%;
+            animation: gradientShift 3s ease infinite;
+        }
+        
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
         }
         
         .header h1 {
-            font-size: 16px;
-            font-weight: 600;
-            color: var(--vscode-editor-foreground);
+            font-size: 18px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
         
         .summary {
             display: flex;
-            gap: 15px;
-            font-size: 12px;
+            gap: 12px;
+            font-size: 13px;
         }
         
         .summary-item {
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-weight: 500;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+        
+        .summary-item::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.5s;
+        }
+        
+        .summary-item:hover::before {
+            left: 100%;
+        }
+        
+        .summary-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
         }
         
         .added { 
-            background: #28a745; 
-            color: white; 
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
         }
         .removed { 
-            background: #dc3545; 
-            color: white; 
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+            color: white;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
         }
         .modified { 
-            background: #17a2b8; 
-            color: white; 
+            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+            color: #333;
+            text-shadow: 0 1px 2px rgba(255, 255, 255, 0.5);
         }
         .moved { 
-            background: #6c757d; 
-            color: white; 
+            background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+            color: #333;
+            text-shadow: 0 1px 2px rgba(255, 255, 255, 0.5);
         }
         
         .diff-container {
             display: flex;
-            height: calc(100vh - 60px);
+            height: calc(100vh - 100px);
+            gap: 2px;
+            padding: 16px;
+            animation: fadeInUp 0.6s ease-out;
+        }
+        
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
         
         .diff-panel {
             flex: 1;
             display: flex;
             flex-direction: column;
-            border-right: 1px solid var(--vscode-panel-border);
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .diff-panel:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
         }
         
         .diff-panel:last-child {
@@ -195,87 +278,240 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
         }
         
         .panel-header {
-            background: var(--vscode-panel-background);
-            padding: 8px 15px;
-            border-bottom: 1px solid var(--vscode-panel-border);
-            font-size: 12px;
-            font-weight: 600;
-            color: var(--vscode-panelTitle-activeForeground);
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
+            backdrop-filter: blur(20px);
+            padding: 16px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        
+        .panel-header::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+            animation: shimmer 2s infinite;
+        }
+        
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
         }
         
         .baseline-header {
-            background: #e3f2fd;
-            color: #1976d2;
+            background: linear-gradient(135deg, rgba(103, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
+            color: #667eea;
+            text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
         }
         
         .current-header {
-            background: #f3e5f5;
-            color: #7b1fa2;
+            background: linear-gradient(135deg, rgba(240, 147, 251, 0.1), rgba(245, 87, 108, 0.1));
+            color: #f093fb;
+            text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
         }
         
         .code-viewer {
             flex: 1;
             overflow: auto;
-            padding: 15px;
-            font-family: 'Courier New', monospace;
-            font-size: 13px;
-            line-height: 1.4;
+            padding: 20px;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Source Code Pro', monospace;
+            font-size: 14px;
+            line-height: 1.6;
             white-space: pre-wrap;
-            background: var(--vscode-editor-background);
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.95));
+            scrollbar-width: thin;
+            scrollbar-color: rgba(103, 126, 234, 0.3) transparent;
+        }
+        
+        .code-viewer::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .code-viewer::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+        
+        .code-viewer::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, rgba(103, 126, 234, 0.6), rgba(118, 75, 162, 0.6));
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+        
+        .code-viewer::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, rgba(103, 126, 234, 0.8), rgba(118, 75, 162, 0.8));
         }
         
         .line {
             display: flex;
             align-items: center;
-            margin: 1px 0;
-            padding: 4px 8px;
-            border-radius: 3px;
+            margin: 2px 0;
+            padding: 8px 12px;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+            position: relative;
+            font-weight: 400;
+        }
+        
+        .line:hover {
+            background: rgba(103, 126, 234, 0.05);
+            transform: translateX(4px);
+            box-shadow: 0 2px 8px rgba(103, 126, 234, 0.1);
         }
         
         .line-number {
-            color: var(--vscode-editorLineNumber-foreground);
-            margin-right: 15px;
-            min-width: 40px;
+            color: rgba(103, 126, 234, 0.6);
+            margin-right: 20px;
+            min-width: 50px;
             text-align: right;
-            font-size: 11px;
+            font-size: 12px;
+            font-weight: 500;
+            font-family: 'SF Mono', monospace;
+            transition: all 0.2s ease;
+        }
+        
+        .line:hover .line-number {
+            color: rgba(103, 126, 234, 0.8);
+            font-weight: 600;
         }
         
         .line-content {
             flex: 1;
             word-break: break-all;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Source Code Pro', monospace;
+            transition: all 0.2s ease;
         }
         
         .added-line {
-            background: #d4edda !important;
-            border-left: 4px solid #28a745 !important;
-            color: #155724 !important;
-            font-weight: bold !important;
+            background: linear-gradient(135deg, rgba(79, 172, 254, 0.1), rgba(0, 242, 254, 0.1)) !important;
+            border-left: 4px solid #4facfe !important;
+            color: #1a365d !important;
+            font-weight: 600 !important;
+            position: relative;
+            box-shadow: 0 2px 8px rgba(79, 172, 254, 0.2) !important;
+        }
+        
+        .added-line::before {
+            content: '+';
+            position: absolute;
+            left: -12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #4facfe;
+            color: white;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(79, 172, 254, 0.3);
         }
         
         .removed-line {
-            background: #f8d7da !important;
-            border-left: 4px solid #dc3545 !important;
-            color: #721c24 !important;
+            background: linear-gradient(135deg, rgba(250, 112, 154, 0.1), rgba(254, 225, 64, 0.1)) !important;
+            border-left: 4px solid #fa709a !important;
+            color: #742a2a !important;
             text-decoration: line-through !important;
-            font-weight: bold !important;
+            font-weight: 600 !important;
+            position: relative;
+            box-shadow: 0 2px 8px rgba(250, 112, 154, 0.2) !important;
+            opacity: 0.8;
+        }
+        
+        .removed-line::before {
+            content: '−';
+            position: absolute;
+            left: -12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #fa709a;
+            color: white;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(250, 112, 154, 0.3);
         }
         
         .modified-line {
-            background: #d1ecf1 !important;
-            border-left: 4px solid #17a2b8 !important;
-            color: #0c5460 !important;
-            font-weight: bold !important;
+            background: linear-gradient(135deg, rgba(168, 237, 234, 0.2), rgba(254, 214, 227, 0.2)) !important;
+            border-left: 4px solid #a8edea !important;
+            color: #2d3748 !important;
+            font-weight: 600 !important;
+            position: relative;
+            box-shadow: 0 2px 8px rgba(168, 237, 234, 0.2) !important;
+        }
+        
+        .modified-line::before {
+            content: '~';
+            position: absolute;
+            left: -12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: linear-gradient(135deg, #a8edea, #fed6e3);
+            color: #2d3748;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(168, 237, 234, 0.3);
         }
         
         .moved-line {
-            background: #e2e3e5 !important;
-            border-left: 4px solid #6c757d !important;
-            color: #383d41 !important;
-            font-weight: bold !important;
+            background: linear-gradient(135deg, rgba(255, 236, 210, 0.2), rgba(252, 182, 159, 0.2)) !important;
+            border-left: 4px solid #ffecd2 !important;
+            color: #744210 !important;
+            font-weight: 600 !important;
+            position: relative;
+            box-shadow: 0 2px 8px rgba(255, 236, 210, 0.2) !important;
+        }
+        
+        .moved-line::before {
+            content: '↔';
+            position: absolute;
+            left: -12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: linear-gradient(135deg, #ffecd2, #fcb69f);
+            color: #744210;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(255, 236, 210, 0.3);
         }
         
         .unchanged-line {
-            color: var(--vscode-editor-foreground);
+            color: rgba(45, 55, 72, 0.8);
+            transition: all 0.2s ease;
+        }
+        
+        .unchanged-line:hover {
+            background: rgba(103, 126, 234, 0.05);
+            color: rgba(45, 55, 72, 1);
         }
         
         .element-info {
@@ -318,25 +554,58 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
         
         .controls {
             position: fixed;
-            top: 70px;
-            right: 20px;
+            top: 160px;
+            right: 24px;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 12px;
+            z-index: 1000;
         }
         
         .control-btn {
-            background: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 8px 12px;
-            border-radius: 4px;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
+            backdrop-filter: blur(20px);
+            color: #667eea;
+            border: 1px solid rgba(103, 126, 234, 0.2);
+            padding: 12px 16px;
+            border-radius: 12px;
             cursor: pointer;
-            font-size: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 16px rgba(103, 126, 234, 0.1);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .control-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+            transition: left 0.5s;
+        }
+        
+        .control-btn:hover::before {
+            left: 100%;
         }
         
         .control-btn:hover {
-            background: var(--vscode-button-hoverBackground);
+            background: linear-gradient(135deg, rgba(103, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
+            color: #4c63d2;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(103, 126, 234, 0.2);
+            border-color: rgba(103, 126, 234, 0.4);
+        }
+        
+        .control-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 8px rgba(103, 126, 234, 0.3);
         }
         
         .synchronized-scroll {
@@ -353,41 +622,122 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
         }
         
         .diff-added {
-            background: #d4edda !important;
-            color: #155724 !important;
-            border: 1px solid #28a745 !important;
-            border-radius: 2px;
-            font-weight: bold !important;
-            padding: 1px 3px;
+            background: linear-gradient(135deg, rgba(79, 172, 254, 0.2), rgba(0, 242, 254, 0.2)) !important;
+            color: #1a365d !important;
+            border: 1px solid rgba(79, 172, 254, 0.5) !important;
+            border-radius: 6px;
+            font-weight: 600 !important;
+            padding: 2px 6px;
             text-decoration: underline !important;
+            box-shadow: 0 1px 3px rgba(79, 172, 254, 0.3);
+            position: relative;
+        }
+        
+        .diff-added::before {
+            content: '+';
+            position: absolute;
+            left: -8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #4facfe;
+            color: white;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 8px;
+            font-weight: bold;
         }
         
         .diff-removed {
-            background: #f8d7da !important;
-            color: #721c24 !important;
-            border: 1px solid #dc3545 !important;
-            border-radius: 2px;
+            background: linear-gradient(135deg, rgba(250, 112, 154, 0.2), rgba(254, 225, 64, 0.2)) !important;
+            color: #742a2a !important;
+            border: 1px solid rgba(250, 112, 154, 0.5) !important;
+            border-radius: 6px;
             text-decoration: line-through !important;
-            font-weight: bold !important;
-            padding: 1px 3px;
+            font-weight: 600 !important;
+            padding: 2px 6px;
+            box-shadow: 0 1px 3px rgba(250, 112, 154, 0.3);
+            position: relative;
+            opacity: 0.9;
+        }
+        
+        .diff-removed::before {
+            content: '−';
+            position: absolute;
+            left: -8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #fa709a;
+            color: white;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 8px;
+            font-weight: bold;
         }
         
         .diff-modified {
-            background: #d1ecf1 !important;
-            color: #0c5460 !important;
-            border: 1px solid #17a2b8 !important;
-            border-radius: 2px;
-            font-weight: bold !important;
-            padding: 1px 3px;
+            background: linear-gradient(135deg, rgba(168, 237, 234, 0.3), rgba(254, 214, 227, 0.3)) !important;
+            color: #2d3748 !important;
+            border: 1px solid rgba(168, 237, 234, 0.5) !important;
+            border-radius: 6px;
+            font-weight: 600 !important;
+            padding: 2px 6px;
+            box-shadow: 0 1px 3px rgba(168, 237, 234, 0.3);
+            position: relative;
+        }
+        
+        .diff-modified::before {
+            content: '~';
+            position: absolute;
+            left: -8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: linear-gradient(135deg, #a8edea, #fed6e3);
+            color: #2d3748;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 8px;
+            font-weight: bold;
         }
         
         .diff-moved {
-            background: #e2e3e5 !important;
-            color: #383d41 !important;
-            border: 1px solid #6c757d !important;
-            border-radius: 2px;
-            font-weight: bold !important;
-            padding: 1px 3px;
+            background: linear-gradient(135deg, rgba(255, 236, 210, 0.3), rgba(252, 182, 159, 0.3)) !important;
+            color: #744210 !important;
+            border: 1px solid rgba(255, 236, 210, 0.5) !important;
+            border-radius: 6px;
+            font-weight: 600 !important;
+            padding: 2px 6px;
+            box-shadow: 0 1px 3px rgba(255, 236, 210, 0.3);
+            position: relative;
+        }
+        
+        .diff-moved::before {
+            content: '↔';
+            position: absolute;
+            left: -8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: linear-gradient(135deg, #ffecd2, #fcb69f);
+            color: #744210;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 8px;
+            font-weight: bold;
         }
         
         .diff-context {
@@ -398,29 +748,101 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
 
         /* Navigation focus and placeholders */
         .change-group.focused {
-            outline: 2px solid #ffcc00;
+            outline: 3px solid #667eea;
+            outline-offset: 4px;
+            border-radius: 8px;
+            box-shadow: 0 0 0 1px rgba(103, 126, 234, 0.5), 0 4px 20px rgba(103, 126, 234, 0.3);
+            animation: focusPulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes focusPulse {
+            0%, 100% { box-shadow: 0 0 0 1px rgba(103, 126, 234, 0.5), 0 4px 20px rgba(103, 126, 234, 0.3); }
+            50% { box-shadow: 0 0 0 2px rgba(103, 126, 234, 0.8), 0 6px 30px rgba(103, 126, 234, 0.5); }
+        }
+        
+        .placeholder-line {
+            background: linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+            border-left: 4px dashed rgba(103, 126, 234, 0.3);
+            min-height: 1.2em;
+            border-radius: 0 8px 8px 0;
+            transition: all 0.3s ease;
+        }
+        
+        .placeholder-line:hover {
+            background: linear-gradient(135deg, rgba(103, 126, 234, 0.05), rgba(118, 75, 162, 0.05));
+            border-left-color: rgba(103, 126, 234, 0.6);
+        }
+        
+        /* Loading and interaction states */
+        .loading {
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .loading::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(103, 126, 234, 0.2), transparent);
+            animation: loadingShimmer 1.5s infinite;
+        }
+        
+        @keyframes loadingShimmer {
+            0% { left: -100%; }
+            100% { left: 100%; }
+        }
+        
+        /* Enhanced button states */
+        .control-btn:focus {
+            outline: 2px solid rgba(103, 126, 234, 0.5);
             outline-offset: 2px;
         }
-        .placeholder-line {
-            background: rgba(255,255,255,0.03);
-            border-left: 4px dashed var(--vscode-panel-border);
-            min-height: 1.2em;
+        
+        .control-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        .control-btn:disabled:hover {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
+            transform: none;
+            box-shadow: 0 4px 16px rgba(103, 126, 234, 0.1);
         }
 
         .toolbar {
             position: fixed;
-            top: 12px;
-            right: 20px;
+            top: 90px;
+            right: 24px;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 12px;
+            z-index: 1000;
         }
+        
         .pill {
-            padding: 4px 8px;
-            border-radius: 10px;
-            background: var(--vscode-textBlockQuote-background);
-            border: 1px solid var(--vscode-panel-border);
+            padding: 8px 16px;
+            border-radius: 20px;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(103, 126, 234, 0.2);
             font-size: 12px;
+            font-weight: 600;
+            color: #667eea;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 2px 8px rgba(103, 126, 234, 0.1);
+        }
+        
+        .pill:hover {
+            background: linear-gradient(135deg, rgba(103, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
+            color: #4c63d2;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(103, 126, 234, 0.2);
         }
     </style>
 </head>
@@ -695,8 +1117,8 @@ export class DiffViewProvider implements vscode.WebviewViewProvider {
                             </div>`;
                             baselineLineNumber++;
                             currentLineNumber++;
-                            changeIndex++;
                         }
+                        changeIndex++;
                     }
                     break;
             }

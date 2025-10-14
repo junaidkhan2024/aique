@@ -38,11 +38,13 @@ class FilesTreeProvider {
             // Store in workspace folder
             this.configStoragePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'config');
             this.metadataStoragePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'metadata');
+            this.testsStoragePath = path.join(workspaceFolder.uri.fsPath, 'tests');
         }
         else {
             // Fallback to global storage if no workspace
             this.configStoragePath = path.join(context.globalStorageUri.fsPath, 'config');
             this.metadataStoragePath = path.join(context.globalStorageUri.fsPath, 'metadata');
+            this.testsStoragePath = path.join(context.globalStorageUri.fsPath, 'tests');
         }
     }
     refresh() {
@@ -52,17 +54,19 @@ class FilesTreeProvider {
             // Store in workspace folder
             this.configStoragePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'config');
             this.metadataStoragePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'metadata');
+            this.testsStoragePath = path.join(workspaceFolder.uri.fsPath, 'tests');
         }
         else {
             // Fallback to global storage if no workspace
             this.configStoragePath = path.join(this.context.globalStorageUri.fsPath, 'config');
             this.metadataStoragePath = path.join(this.context.globalStorageUri.fsPath, 'metadata');
+            this.testsStoragePath = path.join(this.context.globalStorageUri.fsPath, 'tests');
         }
         this._onDidChangeTreeData.fire();
     }
     getTreeItem(element) {
         // Check if this is a directory (folder) or a file
-        const isDirectory = element.label.includes('Project Configuration') || element.label.includes('Captured Metadata');
+        const isDirectory = element.label.includes('Project Configuration') || element.label.includes('Captured Metadata') || element.label.includes('Generated Tests');
         const treeItem = new vscode.TreeItem(element.label, isDirectory ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
         // Set appropriate icon based on file type
         if (isDirectory) {
@@ -82,6 +86,10 @@ class FilesTreeProvider {
         else if (element.type === 'metadata') {
             treeItem.iconPath = new vscode.ThemeIcon('database');
             treeItem.contextValue = 'metadataFile';
+        }
+        else if (element.type === 'test') {
+            treeItem.iconPath = new vscode.ThemeIcon('beaker');
+            treeItem.contextValue = 'testFile';
         }
         // Set tooltip with file information
         if (isDirectory) {
@@ -113,11 +121,16 @@ class FilesTreeProvider {
                     label: 'Captured Metadata',
                     filePath: this.metadataStoragePath,
                     type: 'metadata'
+                },
+                {
+                    label: 'Generated Tests',
+                    filePath: this.testsStoragePath,
+                    type: 'test'
                 }
             ];
         }
         // Check if this is a directory that should be expanded
-        const isDirectory = element.label.includes('Project Configuration') || element.label.includes('Captured Metadata');
+        const isDirectory = element.label.includes('Project Configuration') || element.label.includes('Captured Metadata') || element.label.includes('Generated Tests');
         if (isDirectory) {
             // Return files in the selected directory
             return this.getFilesInDirectory(element.filePath, element.type);
@@ -142,6 +155,9 @@ class FilesTreeProvider {
                         shouldInclude = true;
                     }
                     else if (type === 'metadata' && file.startsWith('metadata_') && file.endsWith('.json')) {
+                        shouldInclude = true;
+                    }
+                    else if (type === 'test' && (file.endsWith('.js') || file.endsWith('.ts') || file.endsWith('.py') || file.endsWith('.java') || file.endsWith('.cs') || file.endsWith('.json'))) {
                         shouldInclude = true;
                     }
                     if (shouldInclude) {

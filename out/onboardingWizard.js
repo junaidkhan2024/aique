@@ -228,11 +228,124 @@ class OnboardingWizard {
     }
     async showOnboardingWizard() {
         try {
+            // Always use the modern web-based onboarding wizard
+            console.log('Starting modern onboarding wizard...');
+            return await this.showModernOnboardingWizard();
+        }
+        catch (error) {
+            console.error('Modern onboarding failed, falling back to simple wizard:', error);
+            vscode.window.showErrorMessage(`Setup failed: ${error}`);
+            // Fallback to simple wizard if modern one fails
+            return await this.showSimpleOnboardingWizard();
+        }
+    }
+    async showModernOnboardingWizard() {
+        // Create webview panel for modern onboarding
+        const panel = vscode.window.createWebviewPanel('onboardingWizard', 'Project Setup Wizard', vscode.ViewColumn.One, {
+            enableScripts: true,
+            retainContextWhenHidden: true,
+            localResourceRoots: [this.context.extensionUri]
+        });
+        let currentStep = 0;
+        let projectData = {};
+        const totalSteps = 10;
+        // Generate the modern onboarding HTML
+        panel.webview.html = this.getModernOnboardingHTML(currentStep, totalSteps, projectData);
+        // Handle messages from the webview
+        return new Promise((resolve) => {
+            const messageListener = panel.webview.onDidReceiveMessage(async (message) => {
+                switch (message.command) {
+                    case 'nextStep':
+                        currentStep++;
+                        if (currentStep < totalSteps) {
+                            projectData = { ...projectData, ...message.data };
+                            panel.webview.html = this.getModernOnboardingHTML(currentStep, totalSteps, projectData);
+                        }
+                        else {
+                            // Complete onboarding
+                            const finalData = { ...projectData, ...message.data };
+                            const projectDetails = await this.createProjectDetails(finalData);
+                            if (projectDetails) {
+                                await this.saveProjectConfiguration(projectDetails);
+                                await this.showCompletionMessage(projectDetails);
+                                resolve(projectDetails);
+                            }
+                            else {
+                                resolve(null);
+                            }
+                            panel.dispose();
+                        }
+                        break;
+                    case 'prevStep':
+                        if (currentStep > 0) {
+                            currentStep--;
+                            projectData = { ...projectData, ...message.data };
+                            panel.webview.html = this.getModernOnboardingHTML(currentStep, totalSteps, projectData);
+                        }
+                        break;
+                    case 'cancel':
+                        resolve(null);
+                        panel.dispose();
+                        break;
+                    case 'validate':
+                        const validation = await this.validateProjectName(message.data.projectName);
+                        panel.webview.postMessage({
+                            command: 'validationResult',
+                            valid: validation.valid,
+                            message: validation.message
+                        });
+                        break;
+                }
+            });
+            panel.onDidDispose(() => {
+                messageListener.dispose();
+                resolve(null);
+            });
+        });
+    }
+    async validateProjectName(projectName) {
+        if (!projectName || projectName.trim().length === 0) {
+            return { valid: false, message: 'Project name is required' };
+        }
+        if (this.projectExists(projectName.trim())) {
+            return { valid: false, message: 'A project with this name already exists' };
+        }
+        return { valid: true, message: '' };
+    }
+    async createProjectDetails(data) {
+        try {
+            return {
+                projectName: data.projectName?.trim() || 'My Project',
+                projectPath: data.projectPath || process.cwd(),
+                appType: data.appType || 'web',
+                webUrl: data.webUrl,
+                environments: data.environments || [],
+                testFramework: data.testFramework || 'playwright',
+                designPattern: data.designPattern || 'pom',
+                testCaseTypes: data.testCaseTypes || [],
+                techStack: data.techStack || [],
+                language: data.language || 'javascript',
+                languageRating: data.languageRating || 3,
+                manualTestCasesFile: data.manualTestCasesFile,
+                hasManualTestCases: !!data.manualTestCasesFile,
+                wantsManualFlowCapture: data.wantsManualFlowCapture || false,
+                captureFrequency: 'manual',
+                teamSize: 1
+            };
+        }
+        catch (error) {
+            vscode.window.showErrorMessage(`Failed to create project details: ${error}`);
+            return null;
+        }
+    }
+    // Fallback method for simple onboarding (keeping original functionality)
+    async showSimpleOnboardingWizard() {
+        try {
             // Step 1: Project Name
             const projectName = await vscode.window.showInputBox({
                 prompt: 'Enter your project name',
-                placeHolder: 'My QA Project',
-                value: 'My QA Project',
+                placeHolder: 'My Project',
+                value: 'My Project',
                 validateInput: (value) => {
                     if (!value || value.trim().length === 0) {
                         return 'Project name is required';
@@ -383,6 +496,7 @@ class OnboardingWizard {
             // Create project details
             const projectDetails = {
                 projectName: projectName.trim(),
+                projectPath: process.cwd(),
                 appType: appType.value,
                 webUrl,
                 environments,
@@ -470,7 +584,7 @@ class OnboardingWizard {
                 metadata: {
                     version: '1.0.0',
                     lastUpdated: new Date().toISOString(),
-                    createdBy: 'QA HTML Capture Extension'
+                    createdBy: 'HTML Capture Extension'
                 },
                 settings: {
                     autoSave: true,
@@ -496,9 +610,9 @@ class OnboardingWizard {
         const techStackText = details.techStack.length > 0
             ? details.techStack.join(', ')
             : 'None selected';
-        const message = `🎉 Setup Complete!
+        const message = `Setup Complete!
 
-Your project "${details.projectName}" is now configured for QA HTML Structure Capture.
+Your project "${details.projectName}" is now configured for HTML Structure Capture.
 
 Configuration Summary:
 • App Type: ${details.appType}
@@ -769,6 +883,8 @@ Note: Closing the browser will automatically stop capture and save your metadata
                 await this.saveCapturedMetadata(capturedMetadata);
                 // Generate tests based on captured metadata
                 projectDetails.generatedTests = await this.generateTestsFromMetadata(projectDetails);
+                // Automatically write tests to files
+                await this.writeTestsToFiles(projectDetails);
                 // Show generated tests for review
                 await this.showGeneratedTestsForReview(projectDetails);
             }
@@ -789,6 +905,8 @@ Note: Closing the browser will automatically stop capture and save your metadata
             projectDetails.pageNames = pageNames;
             projectDetails.generatedTests = await this.generateTestsFromPageNames(projectDetails);
         }
+        // Automatically write tests to files after generation
+        await this.writeTestsToFiles(projectDetails);
     }
     async collectPageNames() {
         const pageNames = [];
@@ -883,7 +1001,9 @@ Note: Closing the browser will automatically stop capture and save your metadata
             title: 'Generated Tests Review'
         });
         if (reviewAction?.value === 'accept_all') {
-            vscode.window.showInformationMessage('All tests have been accepted and added to your project!');
+            // Write tests to files
+            await this.writeTestsToFiles(projectDetails);
+            vscode.window.showInformationMessage('All tests have been accepted and written to files!');
         }
         else if (reviewAction?.value === 'review') {
             vscode.window.showInformationMessage('Test review functionality will be implemented in the next version.');
@@ -891,6 +1011,200 @@ Note: Closing the browser will automatically stop capture and save your metadata
         else if (reviewAction?.value === 'reject_all') {
             vscode.window.showInformationMessage('All tests have been rejected. You can generate new tests later.');
         }
+    }
+    async writeTestsToFiles(projectDetails) {
+        if (!projectDetails.generatedTests || !projectDetails.generatedTests.tests) {
+            vscode.window.showErrorMessage('No tests to write.');
+            return;
+        }
+        try {
+            // Create tests directory in the project
+            const projectPath = projectDetails.projectPath;
+            const testsDir = path.join(projectPath, 'tests');
+            // Ensure tests directory exists
+            if (!fs.existsSync(testsDir)) {
+                fs.mkdirSync(testsDir, { recursive: true });
+            }
+            const { framework, language, pattern, tests } = projectDetails.generatedTests;
+            // Generate test files based on framework and language
+            for (let i = 0; i < tests.length; i++) {
+                const test = tests[i];
+                const fileName = this.generateTestFileName(test.name, language, framework);
+                const filePath = path.join(testsDir, fileName);
+                // Generate test content based on framework and language
+                const testContent = this.generateTestFileContent(test, framework, language, pattern);
+                // Write test file
+                await fs.promises.writeFile(filePath, testContent, 'utf8');
+            }
+            // Also save the test configuration
+            const configPath = path.join(testsDir, 'test-config.json');
+            await fs.promises.writeFile(configPath, JSON.stringify(projectDetails.generatedTests, null, 2));
+            vscode.window.showInformationMessage(`Successfully wrote ${tests.length} test files to ${testsDir}`);
+            // Open the tests directory in explorer
+            vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(testsDir));
+        }
+        catch (error) {
+            console.error('Error writing test files:', error);
+            vscode.window.showErrorMessage(`Failed to write test files: ${error}`);
+        }
+    }
+    generateTestFileName(testName, language, framework) {
+        const sanitizedName = testName.toLowerCase().replace(/[^a-z0-9]/g, '_');
+        const extension = this.getFileExtension(language);
+        return `${sanitizedName}.${extension}`;
+    }
+    getFileExtension(language) {
+        switch (language.toLowerCase()) {
+            case 'javascript':
+            case 'js':
+                return 'js';
+            case 'typescript':
+            case 'ts':
+                return 'ts';
+            case 'python':
+            case 'py':
+                return 'py';
+            case 'java':
+                return 'java';
+            case 'csharp':
+            case 'c#':
+                return 'cs';
+            default:
+                return 'js';
+        }
+    }
+    generateTestFileContent(test, framework, language, pattern) {
+        const { name, description, steps } = test;
+        switch (framework.toLowerCase()) {
+            case 'playwright':
+                return this.generatePlaywrightTest(name, description, steps, language);
+            case 'selenium':
+                return this.generateSeleniumTest(name, description, steps, language);
+            case 'cypress':
+                return this.generateCypressTest(name, description, steps, language);
+            case 'pytest':
+                return this.generatePytestTest(name, description, steps, language);
+            case 'jest':
+                return this.generateJestTest(name, description, steps, language);
+            default:
+                return this.generateGenericTest(name, description, steps, language);
+        }
+    }
+    generatePlaywrightTest(name, description, steps, language) {
+        const isTypeScript = language.toLowerCase() === 'typescript';
+        const ext = isTypeScript ? 'ts' : 'js';
+        return `import { test, expect } from '@playwright/test';
+
+test('${name}', async ({ page }) => {
+    // ${description}
+    
+    // Test steps will be implemented based on captured interactions
+    ${steps.length > 0 ? steps.map((step, index) => `    // Step ${index + 1}: ${step.action || 'Action'}`).join('\n') : '    // No specific steps captured'}
+    
+    // Add your test assertions here
+    await expect(page).toBeTruthy();
+});`;
+    }
+    generateSeleniumTest(name, description, steps, language) {
+        const isTypeScript = language.toLowerCase() === 'typescript';
+        if (isTypeScript) {
+            return `import { Builder, By, until, WebDriver } from 'selenium-webdriver';
+import { describe, it, before, after } from 'mocha';
+
+describe('${name}', () => {
+    let driver: WebDriver;
+
+    before(async () => {
+        driver = await new Builder().forBrowser('chrome').build();
+    });
+
+    it('${description}', async () => {
+        // Test steps will be implemented based on captured interactions
+        ${steps.length > 0 ? steps.map((step, index) => `        // Step ${index + 1}: ${step.action || 'Action'}`).join('\n') : '        // No specific steps captured'}
+        
+        // Add your test assertions here
+        expect(await driver.getTitle()).toBeTruthy();
+    });
+
+    after(async () => {
+        await driver.quit();
+    });
+});`;
+        }
+        else {
+            return `const { Builder, By, until } = require('selenium-webdriver');
+const { describe, it, before, after } = require('mocha');
+
+describe('${name}', () => {
+    let driver;
+
+    before(async () => {
+        driver = await new Builder().forBrowser('chrome').build();
+    });
+
+    it('${description}', async () => {
+        // Test steps will be implemented based on captured interactions
+        ${steps.length > 0 ? steps.map((step, index) => `        // Step ${index + 1}: ${step.action || 'Action'}`).join('\n') : '        // No specific steps captured'}
+        
+        // Add your test assertions here
+        expect(await driver.getTitle()).toBeTruthy();
+    });
+
+    after(async () => {
+        await driver.quit();
+    });
+});`;
+        }
+    }
+    generateCypressTest(name, description, steps, language) {
+        return `describe('${name}', () => {
+    it('${description}', () => {
+        // Test steps will be implemented based on captured interactions
+        ${steps.length > 0 ? steps.map((step, index) => `        // Step ${index + 1}: ${step.action || 'Action'}`).join('\n') : '        // No specific steps captured'}
+        
+        // Add your test assertions here
+        cy.visit('/');
+        cy.get('body').should('be.visible');
+    });
+});`;
+    }
+    generatePytestTest(name, description, steps, language) {
+        return `import pytest
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+
+def test_${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}():
+    """${description}"""
+    # Test steps will be implemented based on captured interactions
+    ${steps.length > 0 ? steps.map((step, index) => `    # Step ${index + 1}: ${step.action || 'Action'}`).join('\n') : '    # No specific steps captured'}
+    
+    # Add your test assertions here
+    driver = webdriver.Chrome()
+    driver.get('http://localhost:3000')
+    assert driver.title is not None
+    driver.quit()`;
+    }
+    generateJestTest(name, description, steps, language) {
+        return `describe('${name}', () => {
+    test('${description}', () => {
+        // Test steps will be implemented based on captured interactions
+        ${steps.length > 0 ? steps.map((step, index) => `        // Step ${index + 1}: ${step.action || 'Action'}`).join('\n') : '        // No specific steps captured'}
+        
+        // Add your test assertions here
+        expect(true).toBe(true);
+    });
+});`;
+    }
+    generateGenericTest(name, description, steps, language) {
+        return `// ${name}
+// ${description}
+
+// Test steps will be implemented based on captured interactions
+${steps.length > 0 ? steps.map((step, index) => `// Step ${index + 1}: ${step.action || 'Action'}`).join('\n') : '// No specific steps captured'}
+
+// Add your test implementation here
+console.log('Test: ${name}');
+console.log('Description: ${description}');`;
     }
     async startMetadataCapture(url) {
         this.isCapturing = true;
@@ -988,7 +1302,7 @@ Note: Closing the browser will automatically stop capture and save your metadata
                         metadata: {
                             version: '1.0.0',
                             lastUpdated: new Date().toISOString(),
-                            createdBy: 'QA HTML Capture Extension'
+                            createdBy: 'HTML Capture Extension'
                         },
                         settings: {
                             autoSave: true,
@@ -1306,6 +1620,97 @@ Note: Closing the browser will automatically stop capture and save your metadata
             }
         }
     }
+    // Method to delete a specific project
+    async deleteProject() {
+        try {
+            const projects = await this.listProjects();
+            if (projects.length === 0) {
+                vscode.window.showInformationMessage('No projects found to delete.');
+                return;
+            }
+            const projectOptions = projects.map(project => ({
+                label: project.name,
+                description: `Last modified: ${project.lastModified.toLocaleDateString()}`,
+                value: project.name
+            }));
+            const selectedProject = await vscode.window.showQuickPick(projectOptions, {
+                placeHolder: 'Select a project to delete',
+                title: 'Delete Project'
+            });
+            if (!selectedProject) {
+                return;
+            }
+            // Confirm deletion
+            const confirmDelete = await vscode.window.showWarningMessage(`Are you sure you want to delete the project "${selectedProject.value}"?\n\nThis will permanently remove:\n• Project configuration\n• All captured baselines\n• All metadata files\n• All generated tests\n\nThis action cannot be undone.`, { modal: true }, 'Delete Project', 'Cancel');
+            if (confirmDelete === 'Delete Project') {
+                await this.deleteProjectData(selectedProject.value);
+                vscode.window.showInformationMessage(`Project "${selectedProject.value}" has been deleted successfully.`);
+                // Refresh the files tree provider
+                if (this.filesTreeProvider) {
+                    this.filesTreeProvider.refresh();
+                }
+            }
+        }
+        catch (error) {
+            vscode.window.showErrorMessage(`Failed to delete project: ${error}`);
+        }
+    }
+    // Method to delete specific project data
+    async deleteProjectData(projectName) {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder found');
+            }
+            // Remove from workspace state
+            const projectKey = `qa-html-capture.project.${projectName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+            await this.context.workspaceState.update(`${projectKey}.details`, undefined);
+            await this.context.workspaceState.update(`${projectKey}.onboardingCompleted`, undefined);
+            // If this was the current project, clear it
+            const currentProject = await this.context.workspaceState.get('qa-html-capture.currentProject');
+            if (currentProject === projectName) {
+                await this.context.workspaceState.update('qa-html-capture.currentProject', undefined);
+            }
+            // Remove project-specific files
+            const qaCapturePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture');
+            if (fs.existsSync(qaCapturePath)) {
+                // Remove config file
+                const configPath = path.join(qaCapturePath, 'config', 'project-config.json');
+                if (fs.existsSync(configPath)) {
+                    fs.unlinkSync(configPath);
+                }
+                // Remove metadata files
+                const metadataPath = path.join(qaCapturePath, 'metadata');
+                if (fs.existsSync(metadataPath)) {
+                    const metadataFiles = fs.readdirSync(metadataPath);
+                    metadataFiles.forEach(file => {
+                        if (file.startsWith('metadata_') && file.endsWith('.json')) {
+                            const filePath = path.join(metadataPath, file);
+                            fs.unlinkSync(filePath);
+                        }
+                    });
+                }
+                // Remove baselines
+                const baselinesPath = path.join(qaCapturePath, 'baselines');
+                if (fs.existsSync(baselinesPath)) {
+                    fs.rmSync(baselinesPath, { recursive: true, force: true });
+                }
+                // Remove reports
+                const reportsPath = path.join(qaCapturePath, 'reports');
+                if (fs.existsSync(reportsPath)) {
+                    fs.rmSync(reportsPath, { recursive: true, force: true });
+                }
+                // If no other projects exist, remove the entire .qa-capture directory
+                const remainingProjects = await this.listProjects();
+                if (remainingProjects.length === 0) {
+                    fs.rmSync(qaCapturePath, { recursive: true, force: true });
+                }
+            }
+        }
+        catch (error) {
+            throw new Error(`Failed to delete project data: ${error}`);
+        }
+    }
     // Method to view captured metadata
     async viewCapturedMetadata() {
         try {
@@ -1343,6 +1748,1298 @@ ${metadata.interactions.map((interaction, index) => `${index + 1}. ${interaction
         }
         catch (error) {
             vscode.window.showErrorMessage(`Failed to view metadata: ${error}`);
+        }
+    }
+    getModernOnboardingHTML(step, totalSteps, projectData) {
+        const progress = ((step + 1) / totalSteps) * 100;
+        const stepTitle = this.getStepTitle(step);
+        const stepContent = this.getStepContent(step, projectData);
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Setup Wizard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+            overflow-x: hidden;
+        }
+
+        .wizard-container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .wizard-header {
+            text-align: center;
+            margin-bottom: 40px;
+            animation: fadeInDown 0.8s ease-out;
+        }
+
+        .wizard-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .wizard-subtitle {
+            font-size: 1.1rem;
+            color: rgba(255,255,255,0.9);
+            margin-bottom: 30px;
+        }
+
+        .progress-container {
+            background: rgba(255,255,255,0.2);
+            border-radius: 25px;
+            height: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+            border-radius: 25px;
+            transition: width 0.5s ease;
+            width: ${progress}%;
+            box-shadow: 0 0 20px rgba(79, 172, 254, 0.5);
+        }
+
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+
+        .step-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.3);
+            margin: 0 8px;
+            transition: all 0.3s ease;
+        }
+
+        .step-dot.active {
+            background: #4facfe;
+            transform: scale(1.3);
+            box-shadow: 0 0 15px rgba(79, 172, 254, 0.6);
+        }
+
+        .step-dot.completed {
+            background: #00f2fe;
+        }
+
+        .wizard-card {
+            background: rgba(255,255,255,0.95);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.1);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.2);
+            animation: fadeInUp 0.8s ease-out;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .step-title {
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .step-description {
+            color: #718096;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-label {
+            display: block;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 8px;
+            font-size: 1rem;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 15px 20px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            background: white;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #4facfe;
+            box-shadow: 0 0 0 3px rgba(79, 172, 254, 0.1);
+        }
+
+        .form-input.error {
+            border-color: #e53e3e;
+            box-shadow: 0 0 0 3px rgba(229, 62, 62, 0.1);
+        }
+
+        .file-upload-container {
+            position: relative;
+            margin-bottom: 10px;
+        }
+
+        .file-input {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+
+        .file-upload-label {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 30px 20px;
+            border: 2px dashed #cbd5e0;
+            border-radius: 12px;
+            background: #f7fafc;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+
+        .file-upload-label:hover {
+            border-color: #4facfe;
+            background: #edf2f7;
+        }
+
+        .file-upload-label.dragover {
+            border-color: #4facfe;
+            background: #e6fffa;
+        }
+
+        .file-upload-icon {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            color: #4a5568;
+        }
+
+        .file-upload-text {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 5px;
+        }
+
+        .file-upload-hint {
+            font-size: 0.875rem;
+            color: #718096;
+        }
+
+        .selected-file-name {
+            margin-top: 10px;
+            padding: 10px 15px;
+            background: #e6fffa;
+            border: 1px solid #38b2ac;
+            border-radius: 8px;
+            color: #234e52;
+            font-weight: 500;
+        }
+
+        .error-message {
+            color: #e53e3e;
+            font-size: 0.875rem;
+            margin-top: 5px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+            animation: shake 0.5s ease-in-out;
+        }
+
+        .option-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .option-card {
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .option-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(79, 172, 254, 0.1), transparent);
+            transition: left 0.5s;
+        }
+
+        .option-card:hover::before {
+            left: 100%;
+        }
+
+        .option-card:hover {
+            border-color: #4facfe;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(79, 172, 254, 0.15);
+        }
+
+        .option-card.selected {
+            border-color: #4facfe;
+            background: linear-gradient(135deg, rgba(79, 172, 254, 0.1), rgba(0, 242, 254, 0.1));
+            box-shadow: 0 8px 25px rgba(79, 172, 254, 0.2);
+        }
+
+        .option-icon {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            display: block;
+        }
+
+        .option-title {
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 5px;
+        }
+
+        .option-description {
+            font-size: 0.875rem;
+            color: #718096;
+        }
+
+        .rating-container {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .rating-star {
+            font-size: 2rem;
+            color: #e2e8f0;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .rating-star:hover,
+        .rating-star.active {
+            color: #ffd700;
+            transform: scale(1.1);
+        }
+
+        .button-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            transition: left 0.5s;
+        }
+
+        .btn:hover::before {
+            left: 100%;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(79, 172, 254, 0.6);
+        }
+
+        .btn-primary:disabled {
+            background: #e2e8f0;
+            color: #a0aec0;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background: white;
+            color: #4a5568;
+            border: 2px solid #e2e8f0;
+        }
+
+        .btn-secondary:hover {
+            border-color: #4facfe;
+            color: #4facfe;
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: #e53e3e;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c53030;
+            transform: translateY(-2px);
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            border: 3px solid #e2e8f0;
+            border-top: 3px solid #4facfe;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes fadeInDown {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .welcome-screen {
+            text-align: center;
+            padding: 60px 40px;
+        }
+
+        .welcome-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            animation: bounce 2s infinite;
+        }
+
+        .welcome-title {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: #2d3748;
+            margin-bottom: 15px;
+        }
+
+        .welcome-description {
+            font-size: 1.1rem;
+            color: #718096;
+            line-height: 1.6;
+            margin-bottom: 40px;
+        }
+
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 40px 0;
+        }
+
+        .feature-item {
+            background: rgba(255,255,255,0.7);
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .feature-icon {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            color: #4facfe;
+        }
+
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% {
+                transform: translateY(0);
+            }
+            40% {
+                transform: translateY(-10px);
+            }
+            60% {
+                transform: translateY(-5px);
+            }
+        }
+
+        .multi-select {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .multi-select-item {
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 20px;
+            padding: 8px 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+        }
+
+        .multi-select-item:hover {
+            border-color: #4facfe;
+        }
+
+        .multi-select-item.selected {
+            background: #4facfe;
+            color: white;
+            border-color: #4facfe;
+        }
+    </style>
+</head>
+<body>
+    <div class="wizard-container">
+        <div class="wizard-header">
+            <div class="wizard-title">🛠 Project Setup</div>
+            <div class="wizard-subtitle">Let's create your testing project in just a few steps</div>
+            <div class="progress-container">
+                <div class="progress-bar"></div>
+            </div>
+            <div class="step-indicator">
+                ${Array.from({ length: totalSteps }, (_, i) => `<div class="step-dot ${i === step ? 'active' : i < step ? 'completed' : ''}"></div>`).join('')}
+            </div>
+        </div>
+
+        <div class="wizard-card">
+            <div class="step-title">${stepTitle}</div>
+            <div class="step-description">${this.getStepDescription(step)}</div>
+            
+            ${stepContent}
+            
+            <div class="button-container">
+                ${step === 0 ?
+            '<button class="btn btn-danger" onclick="cancelWizard()">Cancel</button>' :
+            '<button class="btn btn-secondary" onclick="prevStep()">← Previous</button>'}
+                <button class="btn btn-primary" onclick="nextStep()" id="nextBtn">
+                    ${step === totalSteps - 1 ? 'Finish Setup 🎉' : 'Next →'}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        let currentData = ${JSON.stringify(projectData)};
+
+        function nextStep() {
+            const data = collectCurrentStepData();
+            if (validateCurrentStep(data)) {
+                vscode.postMessage({
+                    command: 'nextStep',
+                    data: data
+                });
+            }
+        }
+
+        function prevStep() {
+            const data = collectCurrentStepData();
+            vscode.postMessage({
+                command: 'prevStep',
+                data: data
+            });
+        }
+
+        function cancelWizard() {
+            vscode.postMessage({
+                command: 'cancel'
+            });
+        }
+
+        function collectCurrentStepData() {
+            const step = ${step};
+            let data = {};
+
+            switch (step) {
+                case 0:
+                    data = {
+                        projectName: document.getElementById('projectName')?.value || ''
+                    };
+                    break;
+                case 1:
+                    data = {
+                        appType: document.querySelector('.option-card.selected')?.dataset.value || ''
+                    };
+                    break;
+                case 2:
+                    data = {
+                        webUrl: document.getElementById('webUrl')?.value || ''
+                    };
+                    break;
+                case 3:
+                    const selectedFramework = document.querySelector('.option-card.selected')?.dataset.value || '';
+                    data = {
+                        testFramework: selectedFramework === 'others' 
+                            ? (document.getElementById('customFramework')?.value || '') 
+                            : selectedFramework
+                    };
+                    break;
+                case 4:
+                    const selectedPattern = document.querySelector('.option-card.selected')?.dataset.value || '';
+                    data = {
+                        designPattern: selectedPattern === 'others' 
+                            ? (document.getElementById('customDesignPattern')?.value || '') 
+                            : selectedPattern
+                    };
+                    break;
+                case 5:
+                    data = {
+                        testCaseTypes: Array.from(document.querySelectorAll('.multi-select-item.selected'))
+                            .map(item => item.dataset.value)
+                    };
+                    break;
+                case 6:
+                    const selectedLanguage = document.querySelector('.option-card.selected')?.dataset.value || '';
+                    data = {
+                        language: selectedLanguage === 'others' 
+                            ? (document.getElementById('customLanguage')?.value || '') 
+                            : selectedLanguage
+                    };
+                    break;
+                case 7:
+                    data = {
+                        languageRating: document.querySelector('.rating-star.active')?.dataset.rating || 1,
+                        wantsManualFlowCapture: document.getElementById('manualFlow')?.checked || false
+                    };
+                    break;
+                case 8:
+                    const selectedEnvironment = document.querySelector('.option-card.selected')?.dataset.value || '';
+                    data = {
+                        environment: selectedEnvironment === 'others' 
+                            ? (document.getElementById('customEnvironment')?.value || '') 
+                            : selectedEnvironment
+                    };
+                    break;
+                case 9:
+                    const hasManualTestCases = document.querySelector('.option-card.selected')?.dataset.value === 'true';
+                    const manualTestFile = document.getElementById('manualTestFile')?.files[0];
+                    data = {
+                        hasManualTestCases: hasManualTestCases,
+                        manualTestFile: hasManualTestCases && manualTestFile ? manualTestFile.name : null
+                    };
+                    break;
+            }
+
+            return { ...currentData, ...data };
+        }
+
+        function validateCurrentStep(data) {
+            const step = ${step};
+            
+            switch (step) {
+                case 0:
+                    if (!data.projectName || data.projectName.trim() === '') {
+                        showError('projectName', 'Project name is required');
+                        return false;
+                    }
+                    break;
+                case 1:
+                    if (!data.appType) {
+                        showError('appType', 'Please select an application type');
+                        return false;
+                    }
+                    break;
+                case 2:
+                    if (data.appType === 'web' && (!data.webUrl || data.webUrl.trim() === '')) {
+                        showError('webUrl', 'Web URL is required for web applications');
+                        return false;
+                    }
+                    break;
+                case 3:
+                    if (!data.testFramework) {
+                        showError('testFramework', 'Please select a test framework');
+                        return false;
+                    }
+                    // If "Others" is selected, validate custom framework input
+                    if (data.testFramework === 'others') {
+                        const customFramework = document.getElementById('customFramework')?.value || '';
+                        if (!customFramework.trim()) {
+                            showError('customFramework', 'Please enter your framework name');
+                            return false;
+                        }
+                    }
+                    break;
+                case 4:
+                    if (!data.designPattern) {
+                        showError('designPattern', 'Please select a design pattern');
+                        return false;
+                    }
+                    // If "Others" is selected, validate custom design pattern input
+                    if (data.designPattern === 'others') {
+                        const customPattern = document.getElementById('customDesignPattern')?.value || '';
+                        if (!customPattern.trim()) {
+                            showError('customDesignPattern', 'Please enter your design pattern name');
+                            return false;
+                        }
+                    }
+                    break;
+                case 6:
+                    if (!data.language) {
+                        showError('language', 'Please select a programming language');
+                        return false;
+                    }
+                    // If "Others" is selected, validate custom language input
+                    if (data.language === 'others') {
+                        const customLanguage = document.getElementById('customLanguage')?.value || '';
+                        if (!customLanguage.trim()) {
+                            showError('customLanguage', 'Please enter your programming language name');
+                            return false;
+                        }
+                    }
+                    break;
+                case 7:
+                    if (!data.languageRating) {
+                        showError('languageRating', 'Please rate your proficiency');
+                        return false;
+                    }
+                    break;
+                case 8:
+                    if (!data.environment) {
+                        showError('environment', 'Please select an environment');
+                        return false;
+                    }
+                    // If "Others" is selected, validate custom environment input
+                    if (data.environment === 'others') {
+                        const customEnvironment = document.getElementById('customEnvironment')?.value || '';
+                        if (!customEnvironment.trim()) {
+                            showError('customEnvironment', 'Please enter your environment name');
+                            return false;
+                        }
+                    }
+                    break;
+                case 9:
+                    if (data.hasManualTestCases === undefined) {
+                        showError('hasManualTestCases', 'Please select whether to include manual test cases');
+                        return false;
+                    }
+                    // If "Yes" is selected, validate file upload
+                    if (data.hasManualTestCases && !data.manualTestFile) {
+                        showError('manualTestFile', 'Please upload a manual test cases file');
+                        return false;
+                    }
+                    break;
+            }
+            
+            clearErrors();
+            return true;
+        }
+
+        function showError(fieldId, message) {
+            const field = document.getElementById(fieldId);
+            const errorDiv = document.getElementById(fieldId + 'Error');
+            
+            if (field) {
+                field.classList.add('error');
+            }
+            
+            if (errorDiv) {
+                errorDiv.textContent = message;
+                errorDiv.classList.add('show');
+            }
+        }
+
+        function clearErrors() {
+            document.querySelectorAll('.error').forEach(el => el.classList.remove('error'));
+            document.querySelectorAll('.error-message').forEach(el => el.classList.remove('show'));
+        }
+
+        function selectOption(card) {
+            // Remove previous selection
+            card.parentElement.querySelectorAll('.option-card').forEach(c => c.classList.remove('selected'));
+            // Add selection to clicked card
+            card.classList.add('selected');
+            
+            // Handle custom framework input visibility
+            const customFrameworkGroup = document.getElementById('customFrameworkGroup');
+            if (customFrameworkGroup) {
+                if (card.dataset.value === 'others') {
+                    customFrameworkGroup.style.display = 'block';
+                } else {
+                    customFrameworkGroup.style.display = 'none';
+                }
+            }
+            
+            // Handle custom design pattern input visibility
+            const customDesignPatternGroup = document.getElementById('customDesignPatternGroup');
+            if (customDesignPatternGroup) {
+                if (card.dataset.value === 'others') {
+                    customDesignPatternGroup.style.display = 'block';
+                } else {
+                    customDesignPatternGroup.style.display = 'none';
+                }
+            }
+            
+            // Handle custom language input visibility
+            const customLanguageGroup = document.getElementById('customLanguageGroup');
+            if (customLanguageGroup) {
+                if (card.dataset.value === 'others') {
+                    customLanguageGroup.style.display = 'block';
+                } else {
+                    customLanguageGroup.style.display = 'none';
+                }
+            }
+            
+            // Handle custom environment input visibility
+            const customEnvironmentGroup = document.getElementById('customEnvironmentGroup');
+            if (customEnvironmentGroup) {
+                if (card.dataset.value === 'others') {
+                    customEnvironmentGroup.style.display = 'block';
+                } else {
+                    customEnvironmentGroup.style.display = 'none';
+                }
+            }
+            
+            // Handle manual test file upload visibility
+            const manualTestFileGroup = document.getElementById('manualTestFileGroup');
+            if (manualTestFileGroup) {
+                if (card.dataset.value === 'true') {
+                    manualTestFileGroup.style.display = 'block';
+                } else {
+                    manualTestFileGroup.style.display = 'none';
+                }
+            }
+            
+            clearErrors();
+        }
+
+        function toggleMultiSelect(item) {
+            item.classList.toggle('selected');
+            clearErrors();
+        }
+
+        function setRating(rating) {
+            document.querySelectorAll('.rating-star').forEach((star, index) => {
+                star.classList.toggle('active', index < rating);
+            });
+            
+            // Update proficiency level text
+            const proficiencyLevel = document.getElementById('proficiencyLevel');
+            if (proficiencyLevel) {
+                const proficiencyTexts = {
+                    1: 'Beginner - Just getting started',
+                    2: 'Novice - Basic understanding',
+                    3: 'Intermediate - Comfortable with basics',
+                    4: 'Advanced - Experienced developer',
+                    5: 'Expert - Master level proficiency'
+                };
+                proficiencyLevel.textContent = proficiencyTexts[rating] || 'Click on a star to rate your proficiency';
+            }
+            
+            clearErrors();
+        }
+
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', function() {
+            // Set up option cards
+            document.querySelectorAll('.option-card').forEach(card => {
+                card.addEventListener('click', () => selectOption(card));
+            });
+
+            // Set up multi-select items
+            document.querySelectorAll('.multi-select-item').forEach(item => {
+                item.addEventListener('click', () => toggleMultiSelect(item));
+            });
+
+            // Set up rating stars
+            document.querySelectorAll('.rating-star').forEach((star, index) => {
+                star.addEventListener('click', () => setRating(index + 1));
+            });
+
+            // Set up file upload
+            const manualTestFileInput = document.getElementById('manualTestFile');
+            if (manualTestFileInput) {
+                manualTestFileInput.addEventListener('change', function(e) {
+                    const file = e.target.files[0];
+                    const fileNameDiv = document.getElementById('selectedFileName');
+                    if (file && fileNameDiv) {
+                        fileNameDiv.textContent = 'Selected: ' + file.name;
+                        fileNameDiv.style.display = 'block';
+                    }
+                    clearErrors();
+                });
+            }
+
+            // Auto-validate project name
+            const projectNameInput = document.getElementById('projectName');
+            if (projectNameInput) {
+                projectNameInput.addEventListener('input', function() {
+                    if (this.value.trim().length > 0) {
+                        vscode.postMessage({
+                            command: 'validate',
+                            data: { projectName: this.value }
+                        });
+                    }
+                });
+            }
+        });
+
+        // Handle validation responses
+        window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.command === 'validationResult') {
+                const projectNameInput = document.getElementById('projectName');
+                const errorDiv = document.getElementById('projectNameError');
+                
+                if (message.valid) {
+                    projectNameInput?.classList.remove('error');
+                    errorDiv?.classList.remove('show');
+                } else {
+                    projectNameInput?.classList.add('error');
+                    if (errorDiv) {
+                        errorDiv.textContent = message.message;
+                        errorDiv.classList.add('show');
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>`;
+    }
+    getStepTitle(step) {
+        const titles = [
+            '🙋🏻‍♂️ Welcome to Project Setup',
+            '📱 Choose Application Type',
+            '🌐 Web Application URL',
+            '🛠️ Select Test Framework',
+            '🏗️ Choose Design Pattern',
+            '📋 Test Case Types',
+            '💻 Programming Language',
+            '⭐ Language Proficiency',
+            '🌍 Environment Under Test',
+            '🧪 Manual Test Cases'
+        ];
+        return titles[step] || 'Setup Step';
+    }
+    getStepDescription(step) {
+        const descriptions = [
+            'Let\'s start by giving your project a name. This will help you identify it later.',
+            'What type of application are you planning to test? This helps us customize your setup.',
+            'Enter the main URL of your web application that you want to test.',
+            'Choose the testing framework that best fits your project needs.',
+            'Select a design pattern that will help organize your test code.',
+            'What types of tests do you want to create? You can select multiple options.',
+            'Choose the programming language you\'re most comfortable with.',
+            'Rate your proficiency in the selected programming language.',
+            'Select the environment where you will be running your tests.',
+            'Do you want to include manual test cases in your project?'
+        ];
+        return descriptions[step] || 'Please complete this step to continue.';
+    }
+    getStepContent(step, projectData) {
+        switch (step) {
+            case 0:
+                return `
+                    <div class="welcome-screen">
+                        <div class="welcome-icon">🤗</div>
+                        <div class="welcome-title">Welcome to HTML Capture!</div>
+                        <div class="welcome-description">
+                            We'll help you set up a professional testing project in just a few steps. 
+                            This wizard will guide you through configuring your project for automated testing.
+                        </div>
+                        
+                        <div class="feature-list">
+                            <div class="feature-item">
+                                <div class="feature-icon">💡</div>
+                                <h4>HTML Structure Analysis</h4>
+                                <p>Automatically detect changes in your web pages</p>
+                            </div>
+                            <div class="feature-item">
+                                <div class="feature-icon">⚡</div>
+                                <h4>Auto Test Generation</h4>
+                                <p>Generate test code based on your configurations</p>
+                            </div>
+                            <div class="feature-item">
+                                <div class="feature-icon">🤖</div>
+                                <h4>Modern UI Testing</h4>
+                                <p>Create beautiful and maintainable test suites</p>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="projectName">Project Name</label>
+                            <input type="text" id="projectName" class="form-input" 
+                                   placeholder="My Awesome Project" 
+                                   value="${projectData.projectName || ''}">
+                            <div id="projectNameError" class="error-message"></div>
+                        </div>
+                    </div>
+                `;
+            case 1:
+                return `
+                    <div class="option-grid">
+                        <div class="option-card" data-value="web">
+                            <span class="option-icon">🌐</span>
+                            <div class="option-title">Web Application</div>
+                            <div class="option-description">Test websites and web applications</div>
+                        </div>
+                        <div class="option-card" data-value="mobile">
+                            <span class="option-icon">📱</span>
+                            <div class="option-title">Mobile Application</div>
+                            <div class="option-description">Test mobile apps and responsive designs</div>
+                        </div>
+                        <div class="option-card" data-value="desktop">
+                            <span class="option-icon">🖥️</span>
+                            <div class="option-title">Desktop Application</div>
+                            <div class="option-description">Test desktop software applications</div>
+                        </div>
+                    </div>
+                `;
+            case 2:
+                return `
+                    <div class="form-group">
+                        <label class="form-label" for="webUrl">Application URL</label>
+                        <input type="url" id="webUrl" class="form-input" 
+                               placeholder="https://your-app.com" 
+                               value="${projectData.webUrl || ''}">
+                        <div id="webUrlError" class="error-message"></div>
+                        <small style="color: #718096; margin-top: 5px; display: block;">
+                            Enter the main URL of your application (e.g., https://myapp.com)
+                        </small>
+                    </div>
+                `;
+            case 3:
+                return `
+                    <div class="option-grid">
+                        <div class="option-card" data-value="playwright">
+                            <span class="option-icon">🎭</span>
+                            <div class="option-title">Playwright</div>
+                            <div class="option-description">Modern, fast, and reliable</div>
+                        </div>
+                        <div class="option-card" data-value="selenium">
+                            <span class="option-icon">🔧</span>
+                            <div class="option-title">Selenium</div>
+                            <div class="option-description">Industry standard</div>
+                        </div>
+                        <div class="option-card" data-value="cypress">
+                            <span class="option-icon">🌲</span>
+                            <div class="option-title">Cypress</div>
+                            <div class="option-description">Developer-friendly</div>
+                        </div>
+                        <div class="option-card" data-value="puppeteer">
+                            <span class="option-icon">🎪</span>
+                            <div class="option-title">Puppeteer</div>
+                            <div class="option-description">Chrome automation</div>
+                        </div>
+                        <div class="option-card" data-value="others">
+                            <span class="option-icon">☰</span>
+                            <div class="option-title">Others</div>
+                            <div class="option-description">Custom framework</div>
+                        </div>
+                    </div>
+                    <div class="form-group" id="customFrameworkGroup" style="display: none; margin-top: 20px;">
+                        <label class="form-label" for="customFramework">Enter your framework name</label>
+                        <input type="text" id="customFramework" class="form-input" 
+                               placeholder="e.g., TestCafe, WebdriverIO, Nightwatch, etc.">
+                        <div id="customFrameworkError" class="error-message"></div>
+                        <small style="color: #718096; margin-top: 5px; display: block;">
+                            Enter the name of your testing framework
+                        </small>
+                    </div>
+                `;
+            case 4:
+                return `
+                    <div class="option-grid">
+                        <div class="option-card" data-value="pom">
+                            <span class="option-icon">📄</span>
+                            <div class="option-title">Page Object Model</div>
+                            <div class="option-description">Organize by pages</div>
+                        </div>
+                        <div class="option-card" data-value="screenplay">
+                            <span class="option-icon">🎬</span>
+                            <div class="option-title">Screenplay Pattern</div>
+                            <div class="option-description">Actor-based approach</div>
+                        </div>
+                        <div class="option-card" data-value="factory">
+                            <span class="option-icon">🏭</span>
+                            <div class="option-title">Factory Pattern</div>
+                            <div class="option-description">Object creation</div>
+                        </div>
+                        <div class="option-card" data-value="none">
+                            <span class="option-icon">🔧</span>
+                            <div class="option-title">No Pattern</div>
+                            <div class="option-description">Keep it simple</div>
+                        </div>
+                        <div class="option-card" data-value="others">
+                            <span class="option-icon">☰</span>
+                            <div class="option-title">Others</div>
+                            <div class="option-description">Custom pattern</div>
+                        </div>
+                    </div>
+                    <div class="form-group" id="customDesignPatternGroup" style="display: none; margin-top: 20px;">
+                        <label class="form-label" for="customDesignPattern">Enter your design pattern name</label>
+                        <input type="text" id="customDesignPattern" class="form-input" 
+                               placeholder="e.g., Builder Pattern, Singleton Pattern, Repository Pattern, etc.">
+                        <div id="customDesignPatternError" class="error-message"></div>
+                        <small style="color: #718096; margin-top: 5px; display: block;">
+                            Enter the name of your design pattern
+                        </small>
+                    </div>
+                `;
+            case 5:
+                return `
+                    <div class="multi-select">
+                        <div class="multi-select-item" data-value="unit">Unit Tests</div>
+                        <div class="multi-select-item" data-value="integration">Integration Tests</div>
+                        <div class="multi-select-item" data-value="e2e">End-to-End Tests</div>
+                        <div class="multi-select-item" data-value="api">API Tests</div>
+                        <div class="multi-select-item" data-value="performance">Performance Tests</div>
+                        <div class="multi-select-item" data-value="security">Security Tests</div>
+                        <div class="multi-select-item" data-value="visual">Visual Regression</div>
+                        <div class="multi-select-item" data-value="accessibility">Accessibility Tests</div>
+                    </div>
+                `;
+            case 6:
+                return `
+                    <div class="option-grid">
+                        <div class="option-card" data-value="Ruby">
+                            <span class="option-icon">💎</span>
+                            <div class="option-title">Ruby</div>
+                            <div class="option-description">Best for web applications</div>
+                        </div>
+                        <div class="option-card" data-value="javascript">
+                            <span class="option-icon">🟨</span>
+                            <div class="option-title">JavaScript</div>
+                            <div class="option-description">Web standard</div>
+                        </div>
+                        <div class="option-card" data-value="typescript">
+                            <span class="option-icon">🔷</span>
+                            <div class="option-title">TypeScript</div>
+                            <div class="option-description">Type-safe JavaScript</div>
+                        </div>
+                        <div class="option-card" data-value="python">
+                            <span class="option-icon">🐍</span>
+                            <div class="option-title">Python</div>
+                            <div class="option-description">Simple and powerful</div>
+                        </div>
+                        <div class="option-card" data-value="java">
+                            <span class="option-icon">☕</span>
+                            <div class="option-title">Java</div>
+                            <div class="option-description">Enterprise ready</div>
+                        </div>
+                        <div class="option-card" data-value="others">
+                            <span class="option-icon">☰</span>
+                            <div class="option-title">Others</div>
+                            <div class="option-description">Custom language</div>
+                        </div>
+                    </div>
+                    <div class="form-group" id="customLanguageGroup" style="display: none; margin-top: 20px;">
+                        <label class="form-label" for="customLanguage">Enter your programming language</label>
+                        <input type="text" id="customLanguage" class="form-input" 
+                               placeholder="e.g., C#, Go, Rust, PHP, Swift, Kotlin, etc.">
+                        <div id="customLanguageError" class="error-message"></div>
+                        <small style="color: #718096; margin-top: 5px; display: block;">
+                            Enter the name of your programming language
+                        </small>
+                    </div>
+                `;
+            case 7:
+                return `
+                    <div class="form-group">
+                        <label class="form-label">Rate your proficiency in ${projectData.language || 'JavaScript'}</label>
+                        <div class="rating-container">
+                            <span class="rating-star" data-rating="1">⭐</span>
+                            <span class="rating-star" data-rating="2">⭐</span>
+                            <span class="rating-star" data-rating="3">⭐</span>
+                            <span class="rating-star" data-rating="4">⭐</span>
+                            <span class="rating-star" data-rating="5">⭐</span>
+                        </div>
+                        <div id="proficiencyLevel" class="proficiency-level" style="margin-top: 10px; font-size: 16px; font-weight: 600; color: #4A5568; min-height: 24px;">
+                            Click on a star to rate your proficiency
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" style="margin-top: 30px;">
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" id="manualFlow" style="margin-right: 10px; transform: scale(1.2);">
+                            <span class="form-label" style="margin: 0;">Enable manual flow capture</span>
+                        </label>
+                        <small style="color: #718096; margin-top: 5px; display: block;">
+                            Allow recording of manual interactions for test generation
+                        </small>
+                    </div>
+                `;
+            case 8:
+                return `
+                    <div class="form-group">
+                        <label class="form-label">Environment Under Test</label>
+                        <p style="color: #718096; margin-bottom: 20px;">Select the environment where you will be running your tests.</p>
+                        <div class="option-grid">
+                            <div class="option-card" data-value="development">
+                                <span class="option-icon">🔧</span>
+                                <div class="option-title">Development</div>
+                                <div class="option-description">Local development environment</div>
+                            </div>
+                            <div class="option-card" data-value="staging">
+                                <span class="option-icon">🚧</span>
+                                <div class="option-title">Staging</div>
+                                <div class="option-description">Pre-production testing</div>
+                            </div>
+                            <div class="option-card" data-value="production">
+                                <span class="option-icon">🌐</span>
+                                <div class="option-title">Production</div>
+                                <div class="option-description">Live production environment</div>
+                            </div>
+                            <div class="option-card" data-value="qa">
+                                <span class="option-icon">🧪</span>
+                                <div class="option-title">QA Environment</div>
+                                <div class="option-description">Dedicated QA testing</div>
+                            </div>
+                            <div class="option-card" data-value="uat">
+                                <span class="option-icon">✅</span>
+                                <div class="option-title">UAT</div>
+                                <div class="option-description">User Acceptance Testing</div>
+                            </div>
+                            <div class="option-card" data-value="others">
+                                <span class="option-icon">☰</span>
+                                <div class="option-title">Others</div>
+                                <div class="option-description">Custom environment</div>
+                            </div>
+                        </div>
+                        <div class="form-group" id="customEnvironmentGroup" style="display: none; margin-top: 20px;">
+                            <label class="form-label" for="customEnvironment">Enter your environment name</label>
+                            <input type="text" id="customEnvironment" class="form-input" 
+                                   placeholder="e.g., Integration, Performance, Security, etc.">
+                            <div id="customEnvironmentError" class="error-message"></div>
+                            <small style="color: #718096; margin-top: 5px; display: block;">
+                                Enter the name of your custom environment
+                            </small>
+                        </div>
+                    </div>
+                `;
+            case 9:
+                return `
+                    <div class="form-group">
+                        <label class="form-label">Include Manual Test Cases</label>
+                        <p style="color: #718096; margin-bottom: 20px;">Do you want to include manual test cases in your project?</p>
+                        <div class="option-grid" style="grid-template-columns: 1fr 1fr;">
+                            <div class="option-card" data-value="true">
+                                <span class="option-icon">✅</span>
+                                <div class="option-title">Yes</div>
+                                <div class="option-description">Include manual test cases</div>
+                            </div>
+                            <div class="option-card" data-value="false">
+                                <span class="option-icon">❌</span>
+                                <div class="option-title">No</div>
+                                <div class="option-description">Automated tests only</div>
+                            </div>
+                        </div>
+                        <div class="form-group" id="manualTestFileGroup" style="display: none; margin-top: 20px;">
+                            <label class="form-label" for="manualTestFile">Upload Manual Test Cases File</label>
+                            <div class="file-upload-container">
+                                <input type="file" id="manualTestFile" class="file-input" accept=".csv,.xlsx,.xls,.json,.txt,.doc,.docx" />
+                                <label for="manualTestFile" class="file-upload-label">
+                                    <span class="file-upload-icon">📁</span>
+                                    <span class="file-upload-text">Choose file or drag & drop</span>
+                                    <small class="file-upload-hint">CSV, Excel, JSON, TXT, Word documents supported</small>
+                                </label>
+                                <div id="selectedFileName" class="selected-file-name" style="display: none;"></div>
+                            </div>
+                            <div id="manualTestFileError" class="error-message"></div>
+                            <small style="color: #718096; margin-top: 5px; display: block;">
+                                Upload a file containing your manual test cases
+                            </small>
+                        </div>
+                    </div>
+                `;
+            default:
+                return '<p>Step content not found</p>';
         }
     }
 }

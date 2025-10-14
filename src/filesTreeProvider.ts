@@ -5,7 +5,7 @@ import * as path from 'path';
 export interface FileItem {
     label: string;
     filePath: string;
-    type: 'config' | 'metadata';
+    type: 'config' | 'metadata' | 'test';
     timestamp?: string;
     size?: string;
 }
@@ -16,6 +16,7 @@ export class FilesTreeProvider implements vscode.TreeDataProvider<FileItem> {
 
     private configStoragePath: string;
     private metadataStoragePath: string;
+    private testsStoragePath: string;
 
     constructor(private context: vscode.ExtensionContext) {
         // Use workspace storage instead of global storage for project-specific files
@@ -24,10 +25,12 @@ export class FilesTreeProvider implements vscode.TreeDataProvider<FileItem> {
             // Store in workspace folder
             this.configStoragePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'config');
             this.metadataStoragePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'metadata');
+            this.testsStoragePath = path.join(workspaceFolder.uri.fsPath, 'tests');
         } else {
             // Fallback to global storage if no workspace
             this.configStoragePath = path.join(context.globalStorageUri.fsPath, 'config');
             this.metadataStoragePath = path.join(context.globalStorageUri.fsPath, 'metadata');
+            this.testsStoragePath = path.join(context.globalStorageUri.fsPath, 'tests');
         }
     }
 
@@ -38,10 +41,12 @@ export class FilesTreeProvider implements vscode.TreeDataProvider<FileItem> {
             // Store in workspace folder
             this.configStoragePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'config');
             this.metadataStoragePath = path.join(workspaceFolder.uri.fsPath, '.qa-capture', 'metadata');
+            this.testsStoragePath = path.join(workspaceFolder.uri.fsPath, 'tests');
         } else {
             // Fallback to global storage if no workspace
             this.configStoragePath = path.join(this.context.globalStorageUri.fsPath, 'config');
             this.metadataStoragePath = path.join(this.context.globalStorageUri.fsPath, 'metadata');
+            this.testsStoragePath = path.join(this.context.globalStorageUri.fsPath, 'tests');
         }
         
         this._onDidChangeTreeData.fire();
@@ -49,7 +54,7 @@ export class FilesTreeProvider implements vscode.TreeDataProvider<FileItem> {
 
     getTreeItem(element: FileItem): vscode.TreeItem {
         // Check if this is a directory (folder) or a file
-        const isDirectory = element.label.includes('Project Configuration') || element.label.includes('Captured Metadata');
+        const isDirectory = element.label.includes('Project Configuration') || element.label.includes('Captured Metadata') || element.label.includes('Generated Tests');
         
         const treeItem = new vscode.TreeItem(
             element.label, 
@@ -72,6 +77,9 @@ export class FilesTreeProvider implements vscode.TreeDataProvider<FileItem> {
         } else if (element.type === 'metadata') {
             treeItem.iconPath = new vscode.ThemeIcon('database');
             treeItem.contextValue = 'metadataFile';
+        } else if (element.type === 'test') {
+            treeItem.iconPath = new vscode.ThemeIcon('beaker');
+            treeItem.contextValue = 'testFile';
         }
 
         // Set tooltip with file information
@@ -106,12 +114,17 @@ export class FilesTreeProvider implements vscode.TreeDataProvider<FileItem> {
                     label: 'Captured Metadata',
                     filePath: this.metadataStoragePath,
                     type: 'metadata'
+                },
+                {
+                    label: 'Generated Tests',
+                    filePath: this.testsStoragePath,
+                    type: 'test'
                 }
             ];
         }
 
         // Check if this is a directory that should be expanded
-        const isDirectory = element.label.includes('Project Configuration') || element.label.includes('Captured Metadata');
+        const isDirectory = element.label.includes('Project Configuration') || element.label.includes('Captured Metadata') || element.label.includes('Generated Tests');
         if (isDirectory) {
             // Return files in the selected directory
             return this.getFilesInDirectory(element.filePath, element.type);
@@ -121,7 +134,7 @@ export class FilesTreeProvider implements vscode.TreeDataProvider<FileItem> {
         return [];
     }
 
-    private getFilesInDirectory(dirPath: string, type: 'config' | 'metadata'): FileItem[] {
+    private getFilesInDirectory(dirPath: string, type: 'config' | 'metadata' | 'test'): FileItem[] {
         try {
             if (!fs.existsSync(dirPath)) {
                 return [];
@@ -140,6 +153,8 @@ export class FilesTreeProvider implements vscode.TreeDataProvider<FileItem> {
                     if (type === 'config' && file.endsWith('.json')) {
                         shouldInclude = true;
                     } else if (type === 'metadata' && file.startsWith('metadata_') && file.endsWith('.json')) {
+                        shouldInclude = true;
+                    } else if (type === 'test' && (file.endsWith('.js') || file.endsWith('.ts') || file.endsWith('.py') || file.endsWith('.java') || file.endsWith('.cs') || file.endsWith('.json'))) {
                         shouldInclude = true;
                     }
 
